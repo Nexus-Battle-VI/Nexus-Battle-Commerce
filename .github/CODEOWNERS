@@ -1,0 +1,17 @@
+# Propiedad del código — Nexus-Battle-Commerce
+#
+# Bounded context: Commerce
+# Team propietario: Team Beta
+#
+# Los Code Owners son obligatorios en la revisión de Pull Requests hacia `main`.
+# Management permanece como fuente única de Issues; aquí solo se gobierna el código.
+
+*                       @Nexus-Battle-VI/team-beta
+
+# Gobierno del repositorio y automatización
+/.github/               @Nexus-Battle-VI/team-beta @Nexus-Battle-VI/scrum-master
+/.github/workflows/     @Nexus-Battle-VI/team-beta @Nexus-Battle-VI/scrum-master
+/.github/CODEOWNERS     @Nexus-Battle-VI/scrum-master
+
+# Documentación técnica y contratos
+/docs/                  @Nexus-Battle-VI/team-beta @Nexus-Battle-VI/scrum-master
