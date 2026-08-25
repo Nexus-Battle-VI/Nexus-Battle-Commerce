@@ -97,9 +97,21 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # La imagen corre con NODE_ENV=production, y en produccion el servicio se
+      # NIEGA a arrancar sin verificacion de identidad (ADR-004). La prueba de
+      # humo aporta configuracion de autenticacion en lugar de rebajar la regla.
+      - name: Verificar que la imagen se NIEGA a arrancar sin autenticacion
+        run: |
+          if docker run --rm nexus-battle-commerce:ci 2>&1 | grep -q 'AUTH_MODE'; then
+            echo "Correcto: la imagen de produccion no arranca sin AUTH_MODE."
+          else
+            echo "FALLO: la imagen arranco sin verificacion de identidad."
+            exit 1
+          fi
+
       - name: Verificar arranque del contenedor
         run: |
-          docker run -d --name commerce-ci -p 3005:3005 nexus-battle-commerce:ci
+          docker run -d --name commerce-ci -p 3005:3005 \n            -e AUTH_MODE=jwt \n            -e COGNITO_USER_POOL_ID=us-east-1_ci \n            -e COGNITO_CLIENT_ID=cliente-ci \n            nexus-battle-commerce:ci
           for attempt in $(seq 1 20); do
             if curl -fsS http://127.0.0.1:3005/api/health/ready > /dev/null; then
               echo "readiness correcta en el intento ${attempt}"

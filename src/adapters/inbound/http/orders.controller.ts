@@ -10,10 +10,9 @@ import {
   NotFoundException,
   Param,
   Post,
-  Query,
   UnprocessableEntityException,
 } from '@nestjs/common'
-import { ApiOperation, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger'
+import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger'
 
 import { DomainError } from '../../../domain/errors/DomainError'
 import {
@@ -40,6 +39,9 @@ import {
 } from './tokens'
 import { AddLineRequest, CancelOrderRequest, CreateOrderRequest, OrderResponse } from './orders.dto'
 
+import { Role, type VerifiedIdentity } from '../../../application/ports/TokenVerifierPort'
+import { CurrentIdentity } from './auth/decorators'
+
 /**
  * Adaptador de entrada HTTP.
  *
@@ -48,6 +50,7 @@ import { AddLineRequest, CancelOrderRequest, CreateOrderRequest, OrderResponse }
  * confirmado viven en el dominio.
  */
 @ApiTags('orders')
+@ApiBearerAuth()
 @Controller('orders')
 export class OrdersController {
   constructor(
@@ -65,9 +68,16 @@ export class OrdersController {
   @ApiOperation({ summary: 'Abre un pedido en borrador' })
   @ApiResponse({ status: 201, description: 'Pedido creado', type: OrderResponse })
   @ApiResponse({ status: 400, description: 'Datos invalidos' })
-  async create(@Body() body: CreateOrderRequest): Promise<OrderResponse> {
+  async create(
+    @Body() body: CreateOrderRequest,
+    @CurrentIdentity() identity: VerifiedIdentity,
+  ): Promise<OrderResponse> {
     try {
-      return await this.createOrder.execute(body)
+      // El cliente NO se lee del cuerpo: sale del testimonio verificado.
+      return await this.createOrder.execute({
+        customerId: identity.subject,
+        currency: body.currency,
+      })
     } catch (error: unknown) {
       throw OrdersController.translate(error)
     }
@@ -75,12 +85,12 @@ export class OrdersController {
 
   @Get()
   @ApiOperation({ summary: 'Lista los pedidos de un cliente' })
-  @ApiQuery({ name: 'customerId', required: true, example: 'acc-0b1d5b0e' })
   @ApiResponse({ status: 200, type: OrderResponse, isArray: true })
-  @ApiResponse({ status: 400, description: 'Falta el identificador del cliente' })
-  async list(@Query('customerId') customerId?: string): Promise<readonly OrderResponse[]> {
+  async list(@CurrentIdentity() identity: VerifiedIdentity): Promise<readonly OrderResponse[]> {
     try {
-      return await this.listOrders.execute(customerId ?? '')
+      // Ya no hay parametro `customerId`. Listar los pedidos de otra persona
+      // era cuestion de cambiar un valor en la cadena de consulta.
+      return await this.listOrders.execute(identity.subject)
     } catch (error: unknown) {
       throw OrdersController.translate(error)
     }
@@ -90,9 +100,12 @@ export class OrdersController {
   @ApiOperation({ summary: 'Recupera un pedido' })
   @ApiResponse({ status: 200, description: 'Pedido encontrado', type: OrderResponse })
   @ApiResponse({ status: 404, description: 'El pedido no existe' })
-  async findOne(@Param('orderId') orderId: string): Promise<OrderResponse> {
+  async findOne(
+    @Param('orderId') orderId: string,
+    @CurrentIdentity() identity: VerifiedIdentity,
+  ): Promise<OrderResponse> {
     try {
-      return await this.getOrder.execute(orderId)
+      return await this.assertOwned(orderId, identity)
     } catch (error: unknown) {
       throw OrdersController.translate(error)
     }
@@ -108,8 +121,11 @@ export class OrdersController {
   async add(
     @Param('orderId') orderId: string,
     @Body() body: AddLineRequest,
+    @CurrentIdentity() identity: VerifiedIdentity,
   ): Promise<OrderResponse> {
     try {
+      await this.assertOwned(orderId, identity)
+
       return await this.addLine.execute({ orderId, sku: body.sku, quantity: body.quantity })
     } catch (error: unknown) {
       throw OrdersController.translate(error)
@@ -125,8 +141,11 @@ export class OrdersController {
   async remove(
     @Param('orderId') orderId: string,
     @Param('sku') sku: string,
+    @CurrentIdentity() identity: VerifiedIdentity,
   ): Promise<OrderResponse> {
     try {
+      await this.assertOwned(orderId, identity)
+
       return await this.removeLine.execute(orderId, sku)
     } catch (error: unknown) {
       throw OrdersController.translate(error)
@@ -139,8 +158,13 @@ export class OrdersController {
   @ApiResponse({ status: 200, description: 'Pedido confirmado', type: OrderResponse })
   @ApiResponse({ status: 400, description: 'El pedido esta vacio o ya no es editable' })
   @ApiResponse({ status: 404, description: 'El pedido no existe' })
-  async confirm(@Param('orderId') orderId: string): Promise<OrderResponse> {
+  async confirm(
+    @Param('orderId') orderId: string,
+    @CurrentIdentity() identity: VerifiedIdentity,
+  ): Promise<OrderResponse> {
     try {
+      await this.assertOwned(orderId, identity)
+
       return await this.confirmOrder.execute(orderId)
     } catch (error: unknown) {
       throw OrdersController.translate(error)
@@ -156,12 +180,32 @@ export class OrdersController {
   async cancel(
     @Param('orderId') orderId: string,
     @Body() body: CancelOrderRequest,
+    @CurrentIdentity() identity: VerifiedIdentity,
   ): Promise<OrderResponse> {
     try {
+      await this.assertOwned(orderId, identity)
+
       return await this.cancelOrder.execute(orderId, body.reason)
     } catch (error: unknown) {
       throw OrdersController.translate(error)
     }
+  }
+
+  /**
+   * Comprueba que el pedido pertenece a quien lo pide y lo devuelve.
+   *
+   * Un pedido ajeno responde 404 y NO 403. Distinguirlos confirmaria que el
+   * pedido existe, y con eso se pueden enumerar pedidos de otras personas
+   * probando identificadores. Un administrador queda exento.
+   */
+  private async assertOwned(orderId: string, identity: VerifiedIdentity): Promise<OrderResponse> {
+    const order = await this.getOrder.execute(orderId)
+
+    if (order.customerId !== identity.subject && !identity.roles.has(Role.Administrator)) {
+      throw new OrderNotFoundError(orderId)
+    }
+
+    return order
   }
 
   /**

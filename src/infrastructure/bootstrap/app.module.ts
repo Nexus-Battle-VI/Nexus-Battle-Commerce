@@ -1,4 +1,5 @@
-import { Module } from '@nestjs/common'
+import { Module, type CanActivate } from '@nestjs/common'
+import { APP_GUARD, Reflector } from '@nestjs/core'
 
 import { OrdersController } from '../../adapters/inbound/http/orders.controller'
 import { HealthController } from '../../adapters/inbound/http/health.controller'
@@ -41,7 +42,14 @@ import { SystemClock } from '../../adapters/outbound/system/SystemClock'
 import { UuidGenerator } from '../../adapters/outbound/system/UuidGenerator'
 
 import { createLogger, type Logger } from '../observability/logger'
-import { loadConfig, PersistenceDriver, type AppConfig } from '../config/env'
+import { AuthMode, loadConfig, PersistenceDriver, type AppConfig } from '../config/env'
+
+import { JwtAuthGuard } from '../../adapters/inbound/http/auth/jwt-auth.guard'
+import { RolesGuard } from '../../adapters/inbound/http/auth/roles.guard'
+import { AnonymousIdentityGuard } from '../../adapters/inbound/http/auth/anonymous.guard'
+import { TOKEN_VERIFIER } from '../../application/ports/TokenVerifierPort'
+import type { TokenVerifierPort } from '../../application/ports/TokenVerifierPort'
+import { CognitoTokenVerifier } from '../../adapters/outbound/identity/CognitoTokenVerifier'
 import type { ReadinessCheck, VersionReport } from '../health/health'
 
 export const APP_CONFIG = Symbol('AppConfig')
@@ -104,6 +112,54 @@ export const ORDER_DEPENDENCIES = Symbol('OrderDependencies')
         return new LocalCatalogPricing(DEMO_PRICES)
       },
       inject: [LOGGER],
+    },
+    {
+      provide: TOKEN_VERIFIER,
+      useFactory: (config: AppConfig, logger: Logger): TokenVerifierPort => {
+        if (config.cognito === null) {
+          // No se devuelve un verificador que acepte cualquier cosa: sin
+          // proveedor, el guard directamente no se registra. Un verificador
+          // permisivo daria la apariencia de que hay comprobacion.
+          logger.warn('authentication_disabled', {
+            detail:
+              'AUTH_MODE=disabled: ninguna ruta verifica quien realiza la peticion. BLOCKER de ADR-004.',
+          })
+
+          return {
+            verify: (): Promise<never> => {
+              throw new Error('No hay verificador de testimonios configurado.')
+            },
+          }
+        }
+
+        return new CognitoTokenVerifier(config.cognito)
+      },
+      inject: [APP_CONFIG, LOGGER],
+    },
+    // Los guards se registran de forma global SOLO cuando hay proveedor. El
+    // orden importa: JwtAuthGuard deja la identidad verificada en la peticion y
+    // RolesGuard la lee. NestJS los ejecuta en el orden de declaracion.
+    {
+      provide: APP_GUARD,
+      useFactory: (
+        config: AppConfig,
+        reflector: Reflector,
+        verifier: TokenVerifierPort,
+      ): CanActivate =>
+        config.authMode === AuthMode.Jwt
+          ? new JwtAuthGuard(reflector, verifier)
+          : // Sin proveedor no se deja pasar sin mas: se atribuye la identidad
+            // anonima, para que lo que se guarde diga que nadie fue verificado.
+            new AnonymousIdentityGuard(),
+      inject: [APP_CONFIG, Reflector, TOKEN_VERIFIER],
+    },
+    {
+      provide: APP_GUARD,
+      useFactory: (config: AppConfig, reflector: Reflector): CanActivate =>
+        config.authMode === AuthMode.Jwt
+          ? new RolesGuard(reflector)
+          : { canActivate: (): boolean => true },
+      inject: [APP_CONFIG, Reflector],
     },
     {
       provide: CLOCK,

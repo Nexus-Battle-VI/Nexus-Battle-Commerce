@@ -30,8 +30,15 @@ describe('API de comercio', () => {
     await app.close()
   })
 
-  const createOrder = (customerId = 'acc-1', currency = 'COP') =>
-    request(app.getHttpServer()).post('/api/orders').send({ customerId, currency })
+  /**
+   * Ninguna peticion declara el cliente: sale del testimonio. Con
+   * AUTH_MODE=disabled ese testimonio es la identidad anonima, y el cliente que
+   * queda registrado es literalmente `anonymous`.
+   */
+  const ANONYMOUS = 'anonymous'
+
+  const createOrder = (currency = 'COP') =>
+    request(app.getHttpServer()).post('/api/orders').send({ currency })
 
   const addLine = (orderId: string, sku: string, quantity: number) =>
     request(app.getHttpServer()).post(`/api/orders/${orderId}/lines`).send({ sku, quantity })
@@ -41,7 +48,7 @@ describe('API de comercio', () => {
 
     expect(response.status).toBe(201)
     expect(response.body).toMatchObject({
-      customerId: 'acc-1',
+      customerId: ANONYMOUS,
       status: 'DRAFT',
       currency: 'COP',
       total: 0,
@@ -50,13 +57,13 @@ describe('API de comercio', () => {
   })
 
   it('POST /api/orders responde 400 con una moneda no soportada', async () => {
-    expect((await createOrder('acc-1', 'GBP')).status).toBe(400)
+    expect((await createOrder('GBP')).status).toBe(400)
   })
 
   it('POST /api/orders rechaza campos no declarados en el contrato', async () => {
     const response = await request(app.getHttpServer())
       .post('/api/orders')
-      .send({ customerId: 'acc-1', currency: 'COP', total: 1 })
+      .send({ currency: 'COP', total: 1 })
 
     expect(response.status).toBe(400)
   })
@@ -193,18 +200,32 @@ describe('API de comercio', () => {
     expect((await request(app.getHttpServer()).get('/api/orders/inexistente')).status).toBe(404)
   })
 
-  it('GET /api/orders lista los pedidos del cliente indicado', async () => {
-    await createOrder('acc-listado')
-    await createOrder('acc-listado')
+  it('GET /api/orders lista los pedidos de quien realiza la peticion', async () => {
+    const before = await request(app.getHttpServer()).get('/api/orders')
 
-    const response = await request(app.getHttpServer()).get('/api/orders?customerId=acc-listado')
+    await createOrder()
+    await createOrder()
+
+    const response = await request(app.getHttpServer()).get('/api/orders')
 
     expect(response.status).toBe(200)
-    expect(response.body).toHaveLength(2)
+    expect(response.body).toHaveLength((before.body as unknown[]).length + 2)
   })
 
-  it('GET /api/orders responde 400 sin identificador de cliente', async () => {
-    expect((await request(app.getHttpServer()).get('/api/orders')).status).toBe(400)
+  /**
+   * El parametro `customerId` desaparecio del contrato. Listar los pedidos de
+   * otra persona era cuestion de cambiar un valor en la cadena de consulta.
+   */
+  it('ignora un intento de listar los pedidos de otra persona', async () => {
+    const propios = await request(app.getHttpServer()).get('/api/orders')
+    const ajenos = await request(app.getHttpServer()).get('/api/orders?customerId=acc-de-otro')
+
+    expect(ajenos.status).toBe(200)
+    expect(ajenos.body).toEqual(propios.body)
+  })
+
+  it('GET /api/orders ya no exige identificador de cliente: lo toma del testimonio', async () => {
+    expect((await request(app.getHttpServer()).get('/api/orders')).status).toBe(200)
   })
 })
 

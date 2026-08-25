@@ -384,7 +384,17 @@ describe('loadConfig', () => {
   })
 
   it('deshabilita la documentacion interactiva en produccion por defecto', () => {
-    expect(loadConfig({ NODE_ENV: 'production' }).swaggerEnabled).toBe(false)
+    // Produccion exige autenticacion configurada: `loadConfig` se niega a
+    // arrancar sin ella. Se aporta aqui porque el objeto de esta prueba es la
+    // documentacion interactiva, no la autenticacion.
+    expect(
+      loadConfig({
+        NODE_ENV: 'production',
+        AUTH_MODE: 'jwt',
+        COGNITO_USER_POOL_ID: 'us-east-1_abc',
+        COGNITO_CLIENT_ID: 'cliente',
+      }).swaggerEnabled,
+    ).toBe(false)
   })
 
   it('trata una variable vacia como ausente', () => {

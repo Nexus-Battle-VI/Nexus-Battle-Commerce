@@ -11,6 +11,7 @@ import {
   type VersionReport,
 } from '../../../infrastructure/health/health'
 import { READINESS_CHECKS, VERSION_REPORT } from './tokens.health'
+import { Public } from './auth/decorators'
 
 /**
  * Sondas de salud del servicio.
@@ -20,6 +21,9 @@ import { READINESS_CHECKS, VERSION_REPORT } from './tokens.health'
  */
 @ApiTags('health')
 @Controller()
+// Las sondas de salud deben responder sin testimonio: un orquestador no lo
+// tiene, y una sonda que exige autenticacion reporta el servicio como caido.
+@Public()
 export class HealthController {
   constructor(
     @Inject(READINESS_CHECKS) private readonly readinessChecks: readonly ReadinessCheck[],
