@@ -3,12 +3,17 @@ import { IsIn, IsInt, IsString, Length, Matches, Max, Min } from 'class-validato
 
 const KEBAB = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/
 
+/**
+ * Ninguna peticion declara quien la realiza.
+ *
+ * `customerId` estuvo aqui y se ha retirado: era un dato que el cliente
+ * afirmaba, de modo que cualquiera podia abrir y confirmar pedidos a nombre de
+ * otra persona. Ahora sale del `sub` del testimonio verificado.
+ *
+ * Con `forbidNonWhitelisted`, enviarlo ahora produce 400: el intento de
+ * suplantacion se rechaza de forma ruidosa en lugar de aceptarse en silencio.
+ */
 export class CreateOrderRequest {
-  @ApiProperty({ example: 'acc-0b1d5b0e' })
-  @IsString()
-  @Length(1, 128)
-  customerId!: string
-
   @ApiProperty({ example: 'COP', enum: ['COP', 'USD', 'EUR'] })
   @IsIn(['COP', 'USD', 'EUR'])
   currency!: string

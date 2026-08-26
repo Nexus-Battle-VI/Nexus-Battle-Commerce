@@ -24,6 +24,12 @@
     "noPropertyAccessFromIndexSignature": false,
     "types": ["node", "jest"]
   },
-  "include": ["src/**/*.ts", "test/**/*.ts", "eslint.config.mjs", "jest.config.ts"],
+  "include": [
+    "src/**/*.ts",
+    "test/**/*.ts",
+    "eslint.config.mjs",
+    "jest.config.ts",
+    "jest.db.config.ts"
+  ],
   "exclude": ["node_modules", "dist"]
 }

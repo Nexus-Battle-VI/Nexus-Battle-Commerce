@@ -1,4 +1,5 @@
-import { Module } from '@nestjs/common'
+import { Module, type CanActivate } from '@nestjs/common'
+import { APP_GUARD, Reflector } from '@nestjs/core'
 
 import { OrdersController } from '../../adapters/inbound/http/orders.controller'
 import { HealthController } from '../../adapters/inbound/http/health.controller'
@@ -33,6 +34,7 @@ import type { ClockPort } from '../../application/ports/ClockPort'
 import type { IdGeneratorPort } from '../../application/ports/IdGeneratorPort'
 
 import { InMemoryOrderRepository } from '../../adapters/outbound/persistence/InMemoryOrderRepository'
+import { PostgresOrderRepository } from '../../adapters/outbound/persistence/PostgresOrderRepository'
 import {
   DEMO_PRICES,
   LocalCatalogPricing,
@@ -40,8 +42,16 @@ import {
 import { SystemClock } from '../../adapters/outbound/system/SystemClock'
 import { UuidGenerator } from '../../adapters/outbound/system/UuidGenerator'
 
+import { createDatabase } from '../persistence/database'
 import { createLogger, type Logger } from '../observability/logger'
-import { loadConfig, PersistenceDriver, type AppConfig } from '../config/env'
+import { AuthMode, loadConfig, PersistenceDriver, type AppConfig } from '../config/env'
+
+import { JwtAuthGuard } from '../../adapters/inbound/http/auth/jwt-auth.guard'
+import { RolesGuard } from '../../adapters/inbound/http/auth/roles.guard'
+import { AnonymousIdentityGuard } from '../../adapters/inbound/http/auth/anonymous.guard'
+import { TOKEN_VERIFIER } from '../../application/ports/TokenVerifierPort'
+import type { TokenVerifierPort } from '../../application/ports/TokenVerifierPort'
+import { CognitoTokenVerifier } from '../../adapters/outbound/identity/CognitoTokenVerifier'
 import type { ReadinessCheck, VersionReport } from '../health/health'
 
 export const APP_CONFIG = Symbol('AppConfig')
@@ -76,17 +86,26 @@ export const ORDER_DEPENDENCIES = Symbol('OrderDependencies')
     {
       provide: ORDER_REPOSITORY,
       useFactory: (config: AppConfig, logger: Logger): OrderRepositoryPort => {
-        if (config.persistenceDriver === PersistenceDriver.Postgres) {
-          // La configuracion se valida al arrancar para que un despliegue mal
-          // parametrizado falle de inmediato. El adaptador PostgreSQL depende
-          // de que ADR-005 decida el ORM; no se sustituye por una simulacion.
-          logger.warn('postgres_driver_not_available', {
-            detail:
-              'El adaptador PostgreSQL requiere ADR-005 aprobado. Se usa el repositorio en memoria.',
+        if (config.persistenceDriver !== PersistenceDriver.Postgres) {
+          logger.warn('in_memory_persistence', {
+            detail: 'PERSISTENCE_DRIVER=memory: el estado se pierde al reiniciar el servicio.',
           })
+
+          return new InMemoryOrderRepository()
         }
 
-        return new InMemoryOrderRepository()
+        // `loadConfig` ya garantiza que DATABASE_URL existe con este driver: un
+        // servicio mal configurado no debe arrancar y aparentar salud.
+        if (config.databaseUrl === null) {
+          throw new Error('DATABASE_URL es obligatorio con PERSISTENCE_DRIVER=postgres.')
+        }
+
+        logger.info('postgres_persistence', { detail: 'Adaptador PostgreSQL activo.' })
+
+        // El esquema NO se migra aqui. Migrar al arrancar hace que varias
+        // replicas migren a la vez y que una migracion rota deje el servicio en
+        // bucle de reinicio. Es un paso explicito: `npm run migrate`.
+        return new PostgresOrderRepository(createDatabase({ connectionString: config.databaseUrl }))
       },
       inject: [APP_CONFIG, LOGGER],
     },
@@ -104,6 +123,54 @@ export const ORDER_DEPENDENCIES = Symbol('OrderDependencies')
         return new LocalCatalogPricing(DEMO_PRICES)
       },
       inject: [LOGGER],
+    },
+    {
+      provide: TOKEN_VERIFIER,
+      useFactory: (config: AppConfig, logger: Logger): TokenVerifierPort => {
+        if (config.cognito === null) {
+          // No se devuelve un verificador que acepte cualquier cosa: sin
+          // proveedor, el guard directamente no se registra. Un verificador
+          // permisivo daria la apariencia de que hay comprobacion.
+          logger.warn('authentication_disabled', {
+            detail:
+              'AUTH_MODE=disabled: ninguna ruta verifica quien realiza la peticion. BLOCKER de ADR-004.',
+          })
+
+          return {
+            verify: (): Promise<never> => {
+              throw new Error('No hay verificador de testimonios configurado.')
+            },
+          }
+        }
+
+        return new CognitoTokenVerifier(config.cognito)
+      },
+      inject: [APP_CONFIG, LOGGER],
+    },
+    // Los guards se registran de forma global SOLO cuando hay proveedor. El
+    // orden importa: JwtAuthGuard deja la identidad verificada en la peticion y
+    // RolesGuard la lee. NestJS los ejecuta en el orden de declaracion.
+    {
+      provide: APP_GUARD,
+      useFactory: (
+        config: AppConfig,
+        reflector: Reflector,
+        verifier: TokenVerifierPort,
+      ): CanActivate =>
+        config.authMode === AuthMode.Jwt
+          ? new JwtAuthGuard(reflector, verifier)
+          : // Sin proveedor no se deja pasar sin mas: se atribuye la identidad
+            // anonima, para que lo que se guarde diga que nadie fue verificado.
+            new AnonymousIdentityGuard(),
+      inject: [APP_CONFIG, Reflector, TOKEN_VERIFIER],
+    },
+    {
+      provide: APP_GUARD,
+      useFactory: (config: AppConfig, reflector: Reflector): CanActivate =>
+        config.authMode === AuthMode.Jwt
+          ? new RolesGuard(reflector)
+          : { canActivate: (): boolean => true },
+      inject: [APP_CONFIG, Reflector],
     },
     {
       provide: CLOCK,

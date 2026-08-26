@@ -33,6 +33,40 @@ anadir 2 espadas mas                  -> se acumulan al precio original: 3 x 15.
 
 La definición es idéntica a la del contexto Catalog, y **esa duplicación es deliberada**: compartir un paquete común de objetos de dominio acoplaría ambos servicios y convertiría cualquier cambio en Catalog en un despliegue de Commerce.
 
+## Verificacion de identidad
+
+El servicio comprueba el testimonio que acompana a cada peticion contra el JWKS del user pool de Cognito ([ADR-004](https://github.com/Nexus-Battle-VI/Nexus-Battle-Infrastructure/blob/main/docs/adr/ADR-004-identity-directory.md)). Se verifica el **token de acceso**, no el de identidad: el de identidad describe al usuario para la interfaz, el de acceso es el que autoriza y el unico cuyo `client_id` puede comprobarse.
+
+La comprobacion de firma la hace [`aws-jwt-verify`](https://github.com/awslabs/aws-jwt-verify). **No se implementa verificacion criptografica a mano**: es la clase de codigo donde un error sutil no falla, sino que acepta tokens falsificados en silencio.
+
+**La proteccion es el comportamiento por defecto.** El guard se registra de forma global y hay que excluir explicitamente lo que deba ser publico con `@Public()`. Al reves, cualquier endpoint nuevo naceria desprotegido y ese olvido no falla ninguna prueba.
+
+| Ruta                                         | Proteccion                                               |
+| -------------------------------------------- | -------------------------------------------------------- |
+| `POST /api/orders`                           | Testimonio valido. El cliente sale del `sub`             |
+| `GET /api/orders`                            | Testimonio valido. Devuelve **solo los pedidos propios** |
+| `GET /api/orders/:id` y todas las mutaciones | Testimonio valido **y propiedad del pedido**             |
+| `GET /api/health/*`                          | **Publica**                                              |
+
+### `customerId` salio del contrato
+
+Estaba en el cuerpo y en la cadena de consulta. Cualquiera podia abrir pedidos a nombre de otra persona, listar los suyos y confirmarlos. Ahora sale del `sub` del testimonio.
+
+Un pedido ajeno responde **404 y no 403**: distinguirlos confirmaria que el pedido existe, y con eso se pueden enumerar pedidos ajenos probando identificadores. Un administrador queda exento.
+
+### Un binario de produccion sin autenticacion no arranca
+
+Con `NODE_ENV=production` y `AUTH_MODE=disabled`, `loadConfig` lanza `ConfigurationError` y el servicio **no llega a escuchar**. Es la traduccion en codigo del blocker de ADR-004: un aviso en el registro se pasa por alto; un arranque que falla, no.
+
+| Variable             | Efecto                                                                   |
+| -------------------- | ------------------------------------------------------------------------ |
+| `AUTH_MODE=disabled` | Se atribuye la **identidad anonima** a toda peticion. Estado del blocker |
+| `AUTH_MODE=jwt`      | Exige `COGNITO_USER_POOL_ID` y `COGNITO_CLIENT_ID`                       |
+
+Con `disabled` no se deja pasar sin mas: se atribuye el sujeto literal `anonymous` con todos los roles. Sin proveedor **no se sabe** quien realiza la peticion, y el dato que se guarde debe decirlo. Un registro firmado por `anonymous` es honesto; uno firmado por un identificador sin verificar, no.
+
+Los roles llegan en el claim `cognito:groups`. **Los grupos que no corresponden a un rol conocido se descartan**: aceptarlos convertiria el pool en una fuente de roles arbitrarios, donde bastaria crear un grupo con cualquier nombre para inventar un permiso.
+
 ## Requisitos
 
 | Herramienta | Versión                                       |
