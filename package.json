@@ -23,7 +23,10 @@
     "test": "jest",
     "test:unit": "jest --selectProjects unit",
     "test:integration": "jest --selectProjects integration",
-    "test:coverage": "jest --coverage"
+    "test:coverage": "jest --coverage",
+    "migrate": "node dist/infrastructure/persistence/migrate.js",
+    "migrate:dev": "ts-node src/infrastructure/persistence/migrate.ts",
+    "test:db": "jest --config jest.db.config.ts --coverage"
   },
   "dependencies": {
     "@nestjs/common": "11.2.1",
@@ -35,7 +38,9 @@
     "class-transformer": "0.5.1",
     "class-validator": "0.15.1",
     "reflect-metadata": "0.2.2",
-    "rxjs": "7.8.2"
+    "rxjs": "7.8.2",
+    "kysely": "0.28.17",
+    "pg": "8.23.0"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
@@ -53,6 +58,8 @@
     "supertest": "7.2.2",
     "ts-jest": "29.4.12",
     "typescript": "5.9.3",
-    "typescript-eslint": "8.67.0"
+    "typescript-eslint": "8.67.0",
+    "@types/pg": "8.23.1",
+    "@testcontainers/postgresql": "12.1.0"
   }
 }
