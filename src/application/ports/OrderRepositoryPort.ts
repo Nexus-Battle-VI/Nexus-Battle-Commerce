@@ -7,7 +7,12 @@ import type { CustomerId, OrderId } from '../../domain/value-objects/commerce-va
  * Commerce es propietario exclusivo de sus datos. Ningun otro servicio accede a
  * este almacen, ni directamente ni mediante claves foraneas.
  *
- * El adaptador definitivo sobre PostgreSQL queda sujeto a ADR-005.
+ * Hay dos adaptadores, y `PERSISTENCE_DRIVER` elige cual opera:
+ * `PostgresOrderRepository` sobre PostgreSQL (ADR-012) y el de memoria.
+ *
+ * El de memoria NO es un resto del andamiaje: es el que permite que las pruebas
+ * del dominio y de los casos de uso corran sin Docker. Ambos cumplen el mismo
+ * contrato, incluido el de no filtrar al almacen una mutacion sin guardar.
  */
 export interface OrderRepositoryPort {
   save(order: Order): Promise<void>
