@@ -9,8 +9,9 @@ on:
   push:
     branches: [main]
 
-# El token del workflow solo necesita leer el repositorio. Ninguna etapa
-# publica artefactos ni despliega infraestructura.
+# El token del workflow solo necesita leer el repositorio. El unico job que
+# necesita mas es `publish`, y lo pide para si mismo. Ninguna etapa despliega
+# infraestructura desde CI.
 permissions:
   contents: read
 
@@ -95,8 +96,8 @@ jobs:
       - name: Configurar Buildx
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
 
-      # Se construye la imagen para verificar el Dockerfile. No se publica en
-      # ningun registro y no se despliega infraestructura desde CI.
+      # Este job solo construye y verifica. Publicar es trabajo de `publish`, que
+      # solo se ejecuta desde `main` y depende de que este termine en verde.
       - name: Construir imagen
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
@@ -135,3 +136,71 @@ jobs:
           docker logs commerce-ci
           docker rm -f commerce-ci > /dev/null
           exit 1
+
+  publish:
+    name: Publicar imagen en GHCR
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: docker
+    # Solo desde `main`, nunca desde un pull request. Si un PR pudiera publicar,
+    # cualquiera capaz de abrir uno escribiria en el registro de la organizacion.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    # `packages: write` se concede AQUI y no en la cabecera del fichero. Los
+    # demas jobs no lo necesitan, y un permiso que abarca todo el workflow deja
+    # de estar asociado al paso que lo usa.
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Configurar Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+
+      - name: Iniciar sesion en GHCR
+        env:
+          REGISTRO_USUARIO: ${{ github.actor }}
+          REGISTRO_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$REGISTRO_TOKEN" | docker login ghcr.io -u "$REGISTRO_USUARIO" --password-stdin
+
+      # Tres etiquetas, cada una responde a una pregunta distinta:
+      #
+      #   latest       lo que la composicion de referencia trae por defecto;
+      #   sha-<corto>  de que commit exacto salio la imagen, sin ambiguedad;
+      #   <semver>     que version declara el paquete, la misma que sirve /version.
+      #
+      # El propietario se pasa a minusculas a proposito: GHCR no admite
+      # `Nexus-Battle-VI` como ruta de registro y el push fallaria.
+      - name: Calcular etiquetas
+        id: etiquetas
+        env:
+          PROPIETARIO: ${{ github.repository_owner }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          imagen="ghcr.io/$(echo "$PROPIETARIO" | tr '[:upper:]' '[:lower:]')/nexus-battle-commerce"
+          version="$(node -p "require('./package.json').version")"
+          {
+            echo 'lista<<FIN'
+            echo "${imagen}:latest"
+            echo "${imagen}:sha-${COMMIT:0:12}"
+            echo "${imagen}:${version}"
+            echo 'FIN'
+          } >> "$GITHUB_OUTPUT"
+
+      # Se reconstruye desde el mismo commit y con la misma cache que el job
+      # anterior, asi que el trabajo real es un acierto de cache. Lo que
+      # garantiza que se publica algo comprobado no es la cache, sino
+      # `needs: docker`: sin ese job en verde, este no llega a ejecutarse.
+      - name: Construir y publicar
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.etiquetas.outputs.lista }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
