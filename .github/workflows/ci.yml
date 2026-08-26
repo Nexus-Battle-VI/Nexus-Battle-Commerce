@@ -56,6 +56,13 @@ jobs:
       - name: Pruebas de integracion
         run: npm run test:integration
 
+      # Estas pruebas levantan PostgreSQL en un contenedor con Testcontainers y
+      # ejercitan el adaptador contra el motor REAL. Estan fuera de `npm test`
+      # para que quien trabaja en el dominio no necesite Docker, pero el CI las
+      # ejecuta siempre: un esquema equivocado solo se detecta aqui.
+      - name: Pruebas contra PostgreSQL real
+        run: npm run test:db
+
       - name: Cobertura
         run: npm run test:coverage
 

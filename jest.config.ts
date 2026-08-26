@@ -26,7 +26,19 @@ const config: Config = {
       testMatch: ['<rootDir>/test/integration/**/*.spec.ts'],
     },
   ],
-  collectCoverageFrom: ['src/**/*.ts', '!src/**/*.module.ts', '!src/**/index.ts', '!src/main.ts'],
+  // El adaptador de PostgreSQL y su infraestructura quedan fuera porque los
+  // mide `jest.db.config.ts`, que si levanta un motor real. Contarlos aqui como
+  // no cubiertos seria enganoso: no distinguiria lo que no se prueba de lo que
+  // se prueba en otro sitio. Entre las dos configuraciones no queda codigo sin
+  // medir.
+  collectCoverageFrom: [
+    'src/**/*.ts',
+    '!src/**/*.module.ts',
+    '!src/**/index.ts',
+    '!src/main.ts',
+    '!src/adapters/outbound/persistence/PostgresOrderRepository.ts',
+    '!src/infrastructure/persistence/**',
+  ],
   coverageDirectory: 'coverage',
   coverageReporters: ['text-summary', 'lcov', 'json-summary'],
   coverageThreshold: {
