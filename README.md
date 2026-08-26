@@ -67,6 +67,49 @@ Con `disabled` no se deja pasar sin mas: se atribuye el sujeto literal `anonymou
 
 Los roles llegan en el claim `cognito:groups`. **Los grupos que no corresponden a un rol conocido se descartan**: aceptarlos convertiria el pool en una fuente de roles arbitrarios, donde bastaria crear un grupo con cualquier nombre para inventar un permiso.
 
+## Persistencia
+
+PostgreSQL con **Kysely** ([ADR-012](https://github.com/Nexus-Battle-VI/Nexus-Battle-Infrastructure/blob/main/docs/adr/ADR-012-orm-odm.md)). Kysely es un constructor de consultas, no un ORM: **cada consulta está escrita a la vista**, y no hay carga perezosa que dispare consultas dentro de un bucle sin que aparezcan en el código.
+
+| Variable                      | Efecto                                                       |
+| ----------------------------- | ------------------------------------------------------------ |
+| `PERSISTENCE_DRIVER=memory`   | Repositorio en proceso. **El estado se pierde al reiniciar** |
+| `PERSISTENCE_DRIVER=postgres` | Adaptador real. Exige `DATABASE_URL`                         |
+
+### El esquema no se migra al arrancar
+
+```bash
+npm run migrate
+```
+
+Es un paso explícito del despliegue, y el motivo es concreto: migrar desde el arranque hace que **varias réplicas migren a la vez**, y que un despliegue con una migración rota deje el servicio en **bucle de reinicio** en lugar de fallar una sola vez, de forma visible.
+
+### El dinero manda sobre el esquema
+
+El importe es `bigint` y no `integer`. Un pedido en COP supera los 2.147.483.647 sin ninguna dificultad, y **desbordar un importe es la clase de error que nadie detecta hasta que cuadra la caja**.
+
+`pg` entrega `bigint` como **cadena**, y no por capricho: un entero de 64 bits no cabe en el número de JavaScript, exacto solo hasta 2⁵³−1. La traducción comprueba que la conversión sea exacta y falla si no lo es. Un importe redondeado es peor que un error, porque el error se ve.
+
+**Ni el subtotal de la línea ni el total del pedido se guardan.** Son derivados: el agregado los calcula y `restore` ni siquiera los acepta. Persistirlos crearía una segunda fuente de verdad, y un total que no cuadra con sus líneas es peor que no tener total.
+
+### Las restricciones viven en el motor
+
+La clave primaria de las líneas es `(order_id, sku)`: es la invariante de «sin referencias repetidas» puesta en el motor, la misma que `Order.restore` comprueba en el código. Y una restricción exige que la referencia esté normalizada — sin ella, el motor aceptaría `SKU-A` y `sku-a` como dos referencias distintas del mismo pedido.
+
+La moneda vive en el pedido y **no** en cada línea. El dominio exige que todas compartan la del pedido; con una sola columna esa divergencia no se puede ni representar.
+
+Una migración no puede importar el dominio —queda congelada en el tiempo—, así que el vocabulario se repite en SQL. Hay pruebas que comparan ambos y fallan si divergen.
+
+### Pruebas contra el motor real
+
+```bash
+npm run test:db
+```
+
+Levantan PostgreSQL 17 en un contenedor con Testcontainers. **Necesitan Docker**, y por eso están fuera de `npm test`: quien trabaja en el dominio o en los casos de uso no debería necesitarlo. El CI ejecuta ambas suites.
+
+Lo que comprueban no se puede comprobar de otra forma: que las restricciones existan de verdad y que el guardado haga lo que dice. Un doble de prueba habría pasado con un esquema equivocado.
+
 ## Requisitos
 
 | Herramienta | Versión                                       |
@@ -144,7 +187,7 @@ La imagen es multi-etapa, se ejecuta con el usuario sin privilegios `node`, incl
 ## Limitaciones conocidas del alcance actual
 
 - **No hay pago.** Ver la sección correspondiente arriba.
-- **La persistencia es en memoria** y se pierde al reiniciar. El adaptador PostgreSQL depende de que ADR-005 decida el ORM. Configurar `PERSISTENCE_DRIVER=postgres` valida la configuración y lo advierte en el registro, pero no habilita un adaptador que no existe.
+- **La persistencia por defecto es en memoria y se pierde al reiniciar.** Con `PERSISTENCE_DRIVER=postgres` opera el adaptador real sobre PostgreSQL con Kysely, probado contra un motor en contenedor. El repositorio en memoria no es un resto del andamiaje: es lo que permite probar el dominio y los casos de uso **sin Docker**.
 - **Los precios provienen de un catálogo local**, no de una llamada HTTP a Catalog. `LocalCatalogPricing` es una implementación completa del puerto, no una simulación del servicio; el adaptador HTTP depende de que ADR-006 defina la integración. Lo que este servicio **nunca** hace es leer la base de datos de Catalog.
 - **No hay control de acceso.** El `customerId` llega en la petición sin verificar: cualquiera podría crear o confirmar pedidos a nombre de otra persona. Resolverlo depende del proveedor de identidad pendiente de aprobación.
 - **No hay reserva de inventario ni saga de checkout completa.** Confirmar un pedido no descuenta stock ni coordina con Player/Inventory. Esa coordinación es un proceso de larga duración entre servicios y depende de ADR-006.
