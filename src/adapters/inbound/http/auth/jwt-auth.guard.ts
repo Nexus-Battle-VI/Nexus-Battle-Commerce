@@ -71,7 +71,16 @@ export class JwtAuthGuard implements CanActivate {
       return null
     }
 
-    const [scheme, value] = header.split(' ')
+    // Exactamente dos campos. Con `split(' ')` a secas, `Bearer token sobra`
+    // pasaria leyendo solo el segundo: se aceptaria una cabecera que ningun
+    // cliente correcto envia, y que si envia quien esta tanteando el limite.
+    const parts = header.split(' ')
+
+    if (parts.length !== 2) {
+      return null
+    }
+
+    const [scheme, value] = parts
 
     if (scheme?.toLowerCase() !== 'bearer' || value === undefined || value.length === 0) {
       return null

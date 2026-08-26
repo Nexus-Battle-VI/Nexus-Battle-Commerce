@@ -67,11 +67,23 @@ export class CognitoTokenVerifier implements TokenVerifierPort {
  * un pool real. La comprobacion de firma, que es lo que no se debe
  * reimplementar, queda en la biblioteca.
  */
-export const toVerifiedIdentity = (payload: Record<string, unknown>): VerifiedIdentity => ({
-  subject: typeof payload.sub === 'string' ? payload.sub : '',
-  email: readVerifiedEmail(payload),
-  roles: readRoles(payload),
-})
+export const toVerifiedIdentity = (payload: Record<string, unknown>): VerifiedIdentity => {
+  const subject = payload.sub
+
+  // Un token sin `sub` no identifica a nadie, por muy valida que sea su firma.
+  // Rellenar el hueco con cadena vacia lo dejaba pasar como identidad: dos
+  // testimonios mal formados compartirian sujeto y, con el, lo que ese sujeto
+  // posea. Falla como fallo de verificacion, y el guard responde 401.
+  if (typeof subject !== 'string' || subject.length === 0) {
+    throw new TokenVerificationError()
+  }
+
+  return {
+    subject,
+    email: readVerifiedEmail(payload),
+    roles: readRoles(payload),
+  }
+}
 
 /**
  * El correo solo se acepta si el proveedor lo declara verificado. Un correo sin
