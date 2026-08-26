@@ -1,8 +1,11 @@
 name: CI
 
 on:
+  # Sin filtro de rama destino: se valida TODO pull request, tambien los
+  # apilados sobre otra rama de trabajo. Con el filtro anterior, un PR que no
+  # apuntara a `main` no ejecutaba ninguna comprobacion, de modo que no habia
+  # forma de verificarlo antes de integrarlo.
   pull_request:
-    branches: [main]
   push:
     branches: [main]
 
