@@ -55,6 +55,12 @@ export const up = async (db: Kysely<unknown>): Promise<void> => {
     // La invariante queda en el motor y no solo en el codigo.
     .addPrimaryKeyConstraint('order_lines_pk', ['order_id', 'sku'])
     .addCheckConstraint('order_lines_importe_no_negativo', sql`unit_price_amount >= 0`)
+    // La referencia se guarda normalizada, con la MISMA forma que exige `Sku`.
+    // Sin esto, la clave primaria solo impediria repetir la cadena exacta: el
+    // motor aceptaria `SKU-A` y `sku-a` como dos referencias distintas del
+    // mismo pedido, y la invariante que la clave debia garantizar se esquivaria
+    // escribiendo con otra caja.
+    .addCheckConstraint('order_lines_sku_normalizada', sql`sku ~ '^[a-z][a-z0-9]*(-[a-z0-9]+)*$'`)
     // Los limites de cantidad son del dominio (`Quantity`). Se repiten aqui
     // porque una migracion no puede importarlo; hay una prueba que compara
     // ambos y falla si divergen.

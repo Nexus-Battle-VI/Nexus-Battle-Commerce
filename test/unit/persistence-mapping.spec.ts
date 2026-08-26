@@ -9,7 +9,7 @@ import {
   type OrderRow,
 } from '../../src/adapters/outbound/persistence/mapping'
 import { OrderStatus, type OrderSnapshot } from '../../src/domain/entities/Order'
-import { Money, Quantity } from '../../src/domain/value-objects/commerce-values'
+import { Money, Quantity, Sku } from '../../src/domain/value-objects/commerce-values'
 import { up } from '../../src/adapters/outbound/persistence/migrations/001-orders'
 import { describeError } from '../../src/infrastructure/observability/describe-error'
 
@@ -187,6 +187,54 @@ describe('El dominio y la migracion no divergen', () => {
 
   it('la cota de cantidad coincide con el limite del dominio', () => {
     expect(sqlDeLaMigracion).toContain(`quantity <= ${String(Quantity.MAX)}`)
+  })
+
+  /**
+   * El patron de la referencia se compara por COMPORTAMIENTO y no leyendo el
+   * campo privado de `Sku`: lo que importa es que motor y dominio acepten y
+   * rechacen exactamente lo mismo, no que la cadena del patron coincida.
+   *
+   * Sin esta restriccion en el motor, la clave primaria `(order_id, sku)` solo
+   * impediria repetir la cadena exacta: `SKU-A` y `sku-a` convivirian como dos
+   * referencias distintas del mismo pedido.
+   */
+  it('el patron de la referencia acepta y rechaza lo mismo que el dominio', () => {
+    const enLaMigracion = /sku ~ '([^']+)'/.exec(sqlDeLaMigracion)?.[1]
+
+    expect(enLaMigracion).toBeDefined()
+
+    const patron = new RegExp(enLaMigracion!)
+    const ejemplos = [
+      'sku-espada',
+      'sku1',
+      'a',
+      'sku-de-varias-partes',
+      'SKU-MAYUSCULAS',
+      'sku con espacios',
+      '-sku',
+      'sku-',
+      '1sku',
+      '',
+    ]
+
+    for (const ejemplo of ejemplos) {
+      const loAdmiteElDominio = ((): boolean => {
+        try {
+          Sku.create(ejemplo)
+
+          return true
+        } catch {
+          return false
+        }
+      })()
+
+      // El dominio normaliza antes de comprobar; el motor recibe ya lo
+      // normalizado, asi que se le da esa misma forma.
+      expect({ ejemplo, motor: patron.test(ejemplo.trim().toLowerCase()) }).toEqual({
+        ejemplo,
+        motor: loAdmiteElDominio,
+      })
+    }
   })
 })
 

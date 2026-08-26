@@ -191,7 +191,9 @@ describe('PostgresOrderRepository', () => {
       .where('order_id', '=', order.id.value)
       .execute()
 
-    expect(restantes.map((fila) => fila.sku)).toEqual(['SKU-QUEDA'])
+    // `Sku` normaliza a minusculas, asi que es la forma normalizada la que
+    // esta guardada, no la que se escribio al construirla.
+    expect(restantes.map((fila) => fila.sku)).toEqual(['sku-queda'])
   })
 
   it('lee los pedidos de un cliente sin una consulta por pedido', async () => {
@@ -250,7 +252,7 @@ describe('PostgresOrderRepository', () => {
 
     it('impide que un pedido repita la misma referencia', async () => {
       const order = buildOrder()
-      addLine(order, 'SKU-REPETIDA', 1000, 1)
+      addLine(order, 'sku-repetida', 1000, 1)
       await repository.save(order)
 
       await expect(
@@ -258,8 +260,35 @@ describe('PostgresOrderRepository', () => {
           .insertInto('order_lines')
           .values({
             order_id: order.id.value,
-            sku: 'SKU-REPETIDA',
+            sku: 'sku-repetida',
             unit_price_amount: '2000',
+            quantity: 1,
+          })
+          .execute(),
+      ).rejects.toThrow()
+    })
+
+    /**
+     * Sin esta restriccion, la clave primaria solo impediria repetir la cadena
+     * exacta: `SKU-A` y `sku-a` conviviran como dos referencias distintas del
+     * mismo pedido, y la invariante se esquivaria escribiendo con otra caja.
+     */
+    it.each([
+      ['en mayusculas', 'SKU-MAYUSCULAS'],
+      ['con espacios', 'sku con espacios'],
+      ['que empieza por guion', '-sku'],
+      ['vacia', ''],
+    ])('rechaza una referencia %s', async (_caso, sku) => {
+      const order = buildOrder()
+      await repository.save(order)
+
+      await expect(
+        db
+          .insertInto('order_lines')
+          .values({
+            order_id: order.id.value,
+            sku,
+            unit_price_amount: '1000',
             quantity: 1,
           })
           .execute(),
