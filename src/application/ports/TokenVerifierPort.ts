@@ -25,11 +25,26 @@ export const Role = {
   Player: 'PLAYER',
   Moderator: 'MODERATOR',
   Administrator: 'ADMINISTRATOR',
+  /**
+   * Rol raiz del sistema (HU-02, HU-39).
+   *
+   * Estaba ausente de esta union y el grupo SI existe en el pool, de modo que
+   * `isRole` lo descartaba: una cuenta que solo lo tuviera llegaba aqui sin
+   * ningun rol y recibia 403 en toda ruta administrativa, sin nada en la
+   * respuesta que explicara por que. La fuente de verdad del rol es Account;
+   * esto es solo la forma en que llega, y tiene que reconocer lo que llega.
+   */
+  SuperAdministrator: 'SUPER_ADMINISTRATOR',
 } as const
 
 export type Role = (typeof Role)[keyof typeof Role]
 
-export const ALL_ROLES: readonly Role[] = [Role.Player, Role.Moderator, Role.Administrator]
+export const ALL_ROLES: readonly Role[] = [
+  Role.Player,
+  Role.Moderator,
+  Role.Administrator,
+  Role.SuperAdministrator,
+]
 
 export const isRole = (value: string): value is Role =>
   (ALL_ROLES as readonly string[]).includes(value)

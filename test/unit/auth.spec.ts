@@ -47,10 +47,14 @@ describe('Traduccion del token a identidad verificada', () => {
   it('acepta solo los grupos que corresponden a un rol conocido', () => {
     const identity = toVerifiedIdentity({
       sub: 'sujeto-1',
-      'cognito:groups': ['ADMINISTRATOR', 'PLAYER', 'SUPERUSUARIO', 'admin'],
+      'cognito:groups': ['ADMINISTRATOR', 'PLAYER', 'SUPER_ADMINISTRATOR', 'SUPERUSUARIO', 'admin'],
     })
 
-    expect([...identity.roles].sort()).toEqual([Role.Administrator, Role.Player])
+    expect([...identity.roles].sort()).toEqual([
+      Role.Administrator,
+      Role.Player,
+      Role.SuperAdministrator,
+    ])
   })
 
   it('descarta el correo cuando el proveedor no lo declara verificado', () => {
@@ -219,6 +223,34 @@ describe('RolesGuard', () => {
   })
 
   /**
+   * El grupo SUPER_ADMINISTRATOR existe en el pool desde que Account refleja el
+   * rol, pero esta union no lo declaraba: `isRole` lo descartaba y la cuenta
+   * llegaba sin ningun rol. El sintoma era un 403 que no decia nada.
+   */
+  it('deja pasar al super administrador donde se exige administrador', () => {
+    const { context, reflector } = contextFor(
+      { headers: {}, identity: identityWith(Role.SuperAdministrator) },
+      { [REQUIRED_ROLES]: [Role.Administrator] },
+    )
+
+    expect(new RolesGuard(reflector).canActivate(context)).toBe(true)
+  })
+
+  /**
+   * El control del caso anterior. La relacion es de un solo sentido: si tambien
+   * pasara al reves, el rol raiz seria un sinonimo del administrador y la
+   * prueba de arriba pasaria por construccion, sin comprobar nada.
+   */
+  it('NO deja pasar al administrador donde se exige super administrador', () => {
+    const { context, reflector } = contextFor(
+      { headers: {}, identity: identityWith(Role.Administrator) },
+      { [REQUIRED_ROLES]: [Role.SuperAdministrator] },
+    )
+
+    expect(() => new RolesGuard(reflector).canActivate(context)).toThrow(ForbiddenException)
+  })
+
+  /**
    * Sin identidad no se puede autorizar. Devolver `true` aqui convertiria un
    * fallo en el orden de los guards en una ruta abierta.
    */
@@ -246,6 +278,7 @@ describe('AnonymousIdentityGuard', () => {
     expect(ANONYMOUS_IDENTITY.roles.has(Role.Administrator)).toBe(true)
     expect(ANONYMOUS_IDENTITY.roles.has(Role.Moderator)).toBe(true)
     expect(ANONYMOUS_IDENTITY.roles.has(Role.Player)).toBe(true)
+    expect(ANONYMOUS_IDENTITY.roles.has(Role.SuperAdministrator)).toBe(true)
   })
 })
 
