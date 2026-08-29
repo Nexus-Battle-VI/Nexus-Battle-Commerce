@@ -58,14 +58,35 @@ Un pedido ajeno responde **404 y no 403**: distinguirlos confirmaria que el pedi
 
 Con `NODE_ENV=production` y `AUTH_MODE=disabled`, `loadConfig` lanza `ConfigurationError` y el servicio **no llega a escuchar**. Es la traduccion en codigo del blocker de ADR-004: un aviso en el registro se pasa por alto; un arranque que falla, no.
 
-| Variable             | Efecto                                                                   |
-| -------------------- | ------------------------------------------------------------------------ |
-| `AUTH_MODE=disabled` | Se atribuye la **identidad anonima** a toda peticion. Estado del blocker |
-| `AUTH_MODE=jwt`      | Exige `COGNITO_USER_POOL_ID` y `COGNITO_CLIENT_ID`                       |
+| Variable             | Efecto                                                                      |
+| -------------------- | --------------------------------------------------------------------------- |
+| `AUTH_MODE=disabled` | Se atribuye la **identidad anonima** a toda peticion. Solo desarrollo local |
+| `AUTH_MODE=jwt`      | Exige `COGNITO_USER_POOL_ID` y `COGNITO_CLIENT_ID`                          |
 
 Con `disabled` no se deja pasar sin mas: se atribuye el sujeto literal `anonymous` con todos los roles. Sin proveedor **no se sabe** quien realiza la peticion, y el dato que se guarde debe decirlo. Un registro firmado por `anonymous` es honesto; uno firmado por un identificador sin verificar, no.
 
+**El despliegue corre con `AUTH_MODE=jwt`**, no con `disabled`: este servicio verifica de verdad quien realiza cada peticion, comprobado de extremo a extremo. `disabled` sigue existiendo para desarrollo local, y con `NODE_ENV=production` impide arrancar.
+
+### De donde sale el rol que este servicio aplica
+
 Los roles llegan en el claim `cognito:groups`. **Los grupos que no corresponden a un rol conocido se descartan**: aceptarlos convertiria el pool en una fuente de roles arbitrarios, donde bastaria crear un grupo con cualquier nombre para inventar un permiso.
+
+Ese claim no lo llena el proveedor por su cuenta. **La fuente de verdad del rol
+es Account**, que lo guarda en `account_roles` (PostgreSQL) y lo refleja en los
+grupos del pool para que viaje dentro del testimonio. Conviene saberlo por dos
+motivos:
+
+- Este servicio **no debe consultar el rol a Account** en cada peticion. Lo lee
+  del testimonio, que ya viene firmado, y por eso una caida de Account no tumba
+  la autorizacion de este servicio.
+- Un rol recien concedido **no aparece hasta que se emite un testimonio nuevo**.
+  El anterior sigue siendo valido y sigue diciendo lo que decia cuando se emitio.
+
+Hasta el 2026-08-29 ese reflejo no existia: Account escribia el rol en su base y
+el testimonio viajaba sin `cognito:groups`, de modo que este servicio veia **sin
+ningun rol** a quien se hubiera registrado. No daba sintoma porque ninguna puerta
+de este servicio pide `PLAYER`, pero la divergencia era invisible, no
+inexistente.
 
 ## Persistencia
 
