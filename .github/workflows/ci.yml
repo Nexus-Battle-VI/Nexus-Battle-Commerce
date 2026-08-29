@@ -201,6 +201,13 @@ jobs:
         with:
           context: .
           push: true
+          # Los nodos de la demo son Graviton: `t4g.small` es arm64. Sin esta
+          # linea la imagen sale solo para amd64 y el nodo la rechaza con
+          # "no matching manifest for linux/arm64/v8".
+          #
+          # Se construyen las DOS: los portatiles del equipo son amd64 y la
+          # composicion de referencia tiene que seguir levantando en ellos.
+          platforms: linux/amd64,linux/arm64
           tags: ${{ steps.etiquetas.outputs.lista }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
