@@ -257,7 +257,11 @@ describe('Sondas de salud', () => {
     expect(response.status).toBe(200)
     expect(response.body).toEqual({
       status: 'ok',
-      checks: { 'orders-repository': 'ok', 'catalog-pricing': 'ok' },
+      checks: {
+        'orders-repository': 'ok',
+        'wishlist-repository': 'ok',
+        'catalog-pricing': 'ok',
+      },
     })
   })
 

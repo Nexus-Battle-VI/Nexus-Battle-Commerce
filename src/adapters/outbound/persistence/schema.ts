@@ -68,7 +68,22 @@ export interface OrderLinesTable {
   readonly quantity: number
 }
 
+/**
+ * Referencias que un cliente desea.
+ *
+ * Sin `id` propio: la clave es (cliente, referencia), que es exactamente lo
+ * que `Wishlist.add` trata como una sola posicion posible. No hay columna de
+ * "adquirido": esa marca se deriva de `orders` en el momento de leer, y
+ * guardarla aqui crearia una segunda fuente de verdad.
+ */
+export interface WishlistItemsTable {
+  readonly customer_id: string
+  readonly sku: string
+  readonly created_at: Generated<Date>
+}
+
 export interface Database {
   readonly orders: OrdersTable
   readonly order_lines: OrderLinesTable
+  readonly wishlist_items: WishlistItemsTable
 }

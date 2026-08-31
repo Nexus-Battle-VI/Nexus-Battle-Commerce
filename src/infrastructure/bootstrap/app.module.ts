@@ -1,7 +1,9 @@
 import { Module, type CanActivate } from '@nestjs/common'
 import { APP_GUARD, Reflector } from '@nestjs/core'
+import type { Kysely } from 'kysely'
 
 import { OrdersController } from '../../adapters/inbound/http/orders.controller'
+import { WishlistController } from '../../adapters/inbound/http/wishlist.controller'
 import { HealthController } from '../../adapters/inbound/http/health.controller'
 import {
   ADD_LINE,
@@ -12,6 +14,12 @@ import {
   LIST_ORDERS,
   REMOVE_LINE,
 } from '../../adapters/inbound/http/tokens'
+import {
+  ADD_TO_WISHLIST,
+  GET_WISHLIST_ITEM,
+  LIST_WISHLIST,
+  REMOVE_FROM_WISHLIST,
+} from '../../adapters/inbound/http/tokens.wishlist'
 import { READINESS_CHECKS, VERSION_REPORT } from '../../adapters/inbound/http/tokens.health'
 
 import {
@@ -24,17 +32,28 @@ import {
   RemoveOrderLine,
   type OrderDependencies,
 } from '../../application/use-cases/OrderUseCases'
+import {
+  AddToWishlist,
+  GetWishlistItemStatus,
+  ListWishlist,
+  RemoveFromWishlist,
+  type WishlistDependencies,
+} from '../../application/use-cases/WishlistUseCases'
 import { ORDER_REPOSITORY } from '../../application/ports/OrderRepositoryPort'
+import { WISHLIST_REPOSITORY } from '../../application/ports/WishlistRepositoryPort'
 import { PRODUCT_PRICING } from '../../application/ports/ProductPricingPort'
 import { CLOCK } from '../../application/ports/ClockPort'
 import { ID_GENERATOR } from '../../application/ports/IdGeneratorPort'
 import type { OrderRepositoryPort } from '../../application/ports/OrderRepositoryPort'
+import type { WishlistRepositoryPort } from '../../application/ports/WishlistRepositoryPort'
 import type { ProductPricingPort } from '../../application/ports/ProductPricingPort'
 import type { ClockPort } from '../../application/ports/ClockPort'
 import type { IdGeneratorPort } from '../../application/ports/IdGeneratorPort'
 
 import { InMemoryOrderRepository } from '../../adapters/outbound/persistence/InMemoryOrderRepository'
 import { PostgresOrderRepository } from '../../adapters/outbound/persistence/PostgresOrderRepository'
+import { InMemoryWishlistRepository } from '../../adapters/outbound/persistence/InMemoryWishlistRepository'
+import { PostgresWishlistRepository } from '../../adapters/outbound/persistence/PostgresWishlistRepository'
 import {
   DEMO_PRICES,
   LocalCatalogPricing,
@@ -43,6 +62,7 @@ import { SystemClock } from '../../adapters/outbound/system/SystemClock'
 import { UuidGenerator } from '../../adapters/outbound/system/UuidGenerator'
 
 import { createDatabase } from '../persistence/database'
+import type { Database } from '../../adapters/outbound/persistence/schema'
 import { createLogger, type Logger } from '../observability/logger'
 import { AuthMode, loadConfig, PersistenceDriver, type AppConfig } from '../config/env'
 
@@ -57,6 +77,19 @@ import type { ReadinessCheck, VersionReport } from '../health/health'
 export const APP_CONFIG = Symbol('AppConfig')
 export const LOGGER = Symbol('Logger')
 export const ORDER_DEPENDENCIES = Symbol('OrderDependencies')
+export const WISHLIST_DEPENDENCIES = Symbol('WishlistDependencies')
+
+/**
+ * Conexion a PostgreSQL, unica por proceso.
+ *
+ * `Order` y `Wishlist` comparten el mismo esquema (`schema.ts`) y por tanto la
+ * misma conexion: ADR-011 mantiene el limite de conexiones bajo porque seis
+ * servicios comparten el motor, y abrir un segundo `Pool` por agregado
+ * duplicaria ese consumo sin ninguna razon, ya que ambos repositorios leen y
+ * escriben tablas del mismo servicio. `null` cuando el driver es memoria: no
+ * se abre una conexion que ningun adaptador va a usar.
+ */
+export const DATABASE_CONNECTION = Symbol('DatabaseConnection')
 
 /**
  * Raiz de composicion.
@@ -67,7 +100,7 @@ export const ORDER_DEPENDENCIES = Symbol('OrderDependencies')
  * framework.
  */
 @Module({
-  controllers: [OrdersController, HealthController],
+  controllers: [OrdersController, WishlistController, HealthController],
   providers: [
     {
       provide: APP_CONFIG,
@@ -84,14 +117,14 @@ export const ORDER_DEPENDENCIES = Symbol('OrderDependencies')
       inject: [APP_CONFIG],
     },
     {
-      provide: ORDER_REPOSITORY,
-      useFactory: (config: AppConfig, logger: Logger): OrderRepositoryPort => {
+      provide: DATABASE_CONNECTION,
+      useFactory: (config: AppConfig, logger: Logger): Kysely<Database> | null => {
         if (config.persistenceDriver !== PersistenceDriver.Postgres) {
           logger.warn('in_memory_persistence', {
             detail: 'PERSISTENCE_DRIVER=memory: el estado se pierde al reiniciar el servicio.',
           })
 
-          return new InMemoryOrderRepository()
+          return null
         }
 
         // `loadConfig` ya garantiza que DATABASE_URL existe con este driver: un
@@ -102,12 +135,21 @@ export const ORDER_DEPENDENCIES = Symbol('OrderDependencies')
 
         logger.info('postgres_persistence', { detail: 'Adaptador PostgreSQL activo.' })
 
-        // El esquema NO se migra aqui. Migrar al arrancar hace que varias
-        // replicas migren a la vez y que una migracion rota deje el servicio en
-        // bucle de reinicio. Es un paso explicito: `npm run migrate`.
-        return new PostgresOrderRepository(createDatabase({ connectionString: config.databaseUrl }))
+        return createDatabase({ connectionString: config.databaseUrl })
       },
       inject: [APP_CONFIG, LOGGER],
+    },
+    {
+      provide: ORDER_REPOSITORY,
+      useFactory: (db: Kysely<Database> | null): OrderRepositoryPort =>
+        db === null ? new InMemoryOrderRepository() : new PostgresOrderRepository(db),
+      inject: [DATABASE_CONNECTION],
+    },
+    {
+      provide: WISHLIST_REPOSITORY,
+      useFactory: (db: Kysely<Database> | null): WishlistRepositoryPort =>
+        db === null ? new InMemoryWishlistRepository() : new PostgresWishlistRepository(db),
+      inject: [DATABASE_CONNECTION],
     },
     {
       provide: PRODUCT_PRICING,
@@ -227,17 +269,55 @@ export const ORDER_DEPENDENCIES = Symbol('OrderDependencies')
       inject: [ORDER_REPOSITORY],
     },
     {
+      provide: WISHLIST_DEPENDENCIES,
+      useFactory: (
+        wishlist: WishlistRepositoryPort,
+        orders: OrderRepositoryPort,
+      ): WishlistDependencies => ({
+        wishlist,
+        orders,
+      }),
+      inject: [WISHLIST_REPOSITORY, ORDER_REPOSITORY],
+    },
+    {
+      provide: ADD_TO_WISHLIST,
+      useFactory: (deps: WishlistDependencies): AddToWishlist => new AddToWishlist(deps),
+      inject: [WISHLIST_DEPENDENCIES],
+    },
+    {
+      provide: REMOVE_FROM_WISHLIST,
+      useFactory: (deps: WishlistDependencies): RemoveFromWishlist => new RemoveFromWishlist(deps),
+      inject: [WISHLIST_DEPENDENCIES],
+    },
+    {
+      provide: GET_WISHLIST_ITEM,
+      useFactory: (deps: WishlistDependencies): GetWishlistItemStatus =>
+        new GetWishlistItemStatus(deps),
+      inject: [WISHLIST_DEPENDENCIES],
+    },
+    {
+      provide: LIST_WISHLIST,
+      useFactory: (deps: WishlistDependencies): ListWishlist => new ListWishlist(deps),
+      inject: [WISHLIST_DEPENDENCIES],
+    },
+    {
       provide: READINESS_CHECKS,
       useFactory: (
         orders: OrderRepositoryPort,
+        wishlist: WishlistRepositoryPort,
         pricing: ProductPricingPort,
       ): readonly ReadinessCheck[] => [
-        // Ambas comprobaciones ejercitan las dependencias de verdad: si alguna
-        // no responde, la sonda falla. No se declara `ok` de forma incondicional.
+        // Todas las comprobaciones ejercitan las dependencias de verdad: si
+        // alguna no responde, la sonda falla. No se declara `ok` de forma
+        // incondicional.
         { name: 'orders-repository', check: (): boolean => typeof orders.findById === 'function' },
+        {
+          name: 'wishlist-repository',
+          check: (): boolean => typeof wishlist.findByCustomer === 'function',
+        },
         { name: 'catalog-pricing', check: (): boolean => typeof pricing.priceOf === 'function' },
       ],
-      inject: [ORDER_REPOSITORY, PRODUCT_PRICING],
+      inject: [ORDER_REPOSITORY, WISHLIST_REPOSITORY, PRODUCT_PRICING],
     },
     {
       provide: VERSION_REPORT,

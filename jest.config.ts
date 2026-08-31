@@ -37,6 +37,7 @@ const config: Config = {
     '!src/**/index.ts',
     '!src/main.ts',
     '!src/adapters/outbound/persistence/PostgresOrderRepository.ts',
+    '!src/adapters/outbound/persistence/PostgresWishlistRepository.ts',
     '!src/infrastructure/persistence/**',
   ],
   coverageDirectory: 'coverage',
