@@ -92,6 +92,7 @@ describe('CreateOrder', () => {
       status: OrderStatus.Draft,
       currency: 'COP',
       total: 0,
+      itemCount: 0,
       lines: [],
     })
     expect(harness.orders.size).toBe(1)

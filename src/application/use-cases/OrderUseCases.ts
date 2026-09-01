@@ -102,6 +102,96 @@ export class AddOrderLine {
 }
 
 /**
+ * Fija la cantidad de una linea a un valor exacto.
+ *
+ * No consulta el catalogo: el precio unitario ya esta congelado en la linea
+ * desde que se anadio, y cambiar cuantas unidades se quieren no vuelve a
+ * abrir esa negociacion.
+ */
+export class ChangeOrderLineQuantity {
+  private readonly deps: OrderDependencies
+
+  constructor(deps: OrderDependencies) {
+    this.deps = deps
+  }
+
+  async execute(command: AddLineCommand): Promise<OrderDto> {
+    const order = await load(this.deps.orders, command.orderId)
+
+    order.changeLineQuantity(Sku.create(command.sku), Quantity.create(command.quantity))
+
+    await this.deps.orders.save(order)
+
+    return toOrderDto(order.toSnapshot())
+  }
+}
+
+/**
+ * Consulta el carrito vigente del cliente sin crearlo.
+ *
+ * Devuelve `null` cuando el cliente no tiene ningun borrador abierto. Es la
+ * operacion que usa la interfaz para pintar el carrito en cada vista del
+ * modulo, y por eso es una lectura pura: mostrar el carrito no puede tener el
+ * efecto de crear uno.
+ */
+export class GetCart {
+  private readonly orders: OrderRepositoryPort
+
+  constructor(orders: OrderRepositoryPort) {
+    this.orders = orders
+  }
+
+  async execute(rawCustomerId: string): Promise<OrderDto | null> {
+    const found = await this.orders.findByCustomer(CustomerId.create(rawCustomerId))
+    const draft = found.find((order) => order.isEditable)
+
+    return draft === undefined ? null : toOrderDto(draft.toSnapshot())
+  }
+}
+
+/**
+ * Recupera el carrito vigente del cliente, y lo abre si todavia no existe.
+ *
+ * El carrito es el pedido en estado `DRAFT` del cliente: no hay una entidad
+ * "carrito" aparte. Que la consulta lo cree cuando falta es lo que permite a
+ * la interfaz mostrar un carrito vacio sin tener que decidir antes si debe
+ * crearlo, y evita que dos peticiones simultaneas abran dos borradores.
+ *
+ * Si por cualquier razon existiera mas de un borrador, se toma el primero por
+ * identificador y no se borra ninguno: descartar un pedido con lineas seria
+ * peor que arrastrar un duplicado visible.
+ */
+export class GetOrCreateCart {
+  private readonly deps: OrderDependencies
+
+  constructor(deps: OrderDependencies) {
+    this.deps = deps
+  }
+
+  async execute(rawCustomerId: string, currency: string): Promise<OrderDto> {
+    const customerId = CustomerId.create(rawCustomerId)
+    const existing = await this.deps.orders.findByCustomer(customerId)
+    const draft = existing.find((order) => order.isEditable)
+
+    if (draft !== undefined) {
+      return toOrderDto(draft.toSnapshot())
+    }
+
+    Money.zero(currency)
+
+    const order = Order.draft({
+      id: OrderId.create(this.deps.ids.generate()),
+      customerId,
+      currency: currency.trim().toUpperCase(),
+    })
+
+    await this.deps.orders.save(order)
+
+    return toOrderDto(order.toSnapshot())
+  }
+}
+
+/**
  * Retira una referencia completa del pedido.
  */
 export class RemoveOrderLine {

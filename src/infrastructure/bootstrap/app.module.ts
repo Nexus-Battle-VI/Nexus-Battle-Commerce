@@ -4,12 +4,17 @@ import type { Kysely } from 'kysely'
 
 import { OrdersController } from '../../adapters/inbound/http/orders.controller'
 import { WishlistController } from '../../adapters/inbound/http/wishlist.controller'
+import { CheckoutController } from '../../adapters/inbound/http/checkout.controller'
+import { SavedCartController } from '../../adapters/inbound/http/saved-cart.controller'
 import { HealthController } from '../../adapters/inbound/http/health.controller'
 import {
   ADD_LINE,
   CANCEL_ORDER,
+  CHANGE_LINE_QUANTITY,
   CONFIRM_ORDER,
   CREATE_ORDER,
+  GET_CART,
+  GET_OR_CREATE_CART,
   GET_ORDER,
   LIST_ORDERS,
   REMOVE_LINE,
@@ -20,13 +25,23 @@ import {
   LIST_WISHLIST,
   REMOVE_FROM_WISHLIST,
 } from '../../adapters/inbound/http/tokens.wishlist'
+import { CHECKOUT_ORDER, CHECKOUT_SUMMARY } from '../../adapters/inbound/http/tokens.checkout'
+import {
+  DISCARD_SAVED_CART,
+  GET_SAVED_CART,
+  RESTORE_SAVED_CART,
+  SAVE_CART,
+} from '../../adapters/inbound/http/tokens.saved-cart'
 import { READINESS_CHECKS, VERSION_REPORT } from '../../adapters/inbound/http/tokens.health'
 
 import {
   AddOrderLine,
   CancelOrder,
+  ChangeOrderLineQuantity,
   ConfirmOrder,
   CreateOrder,
+  GetCart,
+  GetOrCreateCart,
   GetOrder,
   ListCustomerOrders,
   RemoveOrderLine,
@@ -39,9 +54,29 @@ import {
   RemoveFromWishlist,
   type WishlistDependencies,
 } from '../../application/use-cases/WishlistUseCases'
+import {
+  CheckoutOrder,
+  GetCheckoutSummary,
+  type CheckoutDependencies,
+} from '../../application/use-cases/CheckoutUseCases'
+import {
+  DiscardSavedCart,
+  GetSavedCart,
+  RestoreSavedCart,
+  SaveCart,
+  type SavedCartDependencies,
+} from '../../application/use-cases/SavedCartUseCases'
 import { ORDER_REPOSITORY } from '../../application/ports/OrderRepositoryPort'
 import { WISHLIST_REPOSITORY } from '../../application/ports/WishlistRepositoryPort'
+import { SAVED_CART_REPOSITORY } from '../../application/ports/SavedCartRepositoryPort'
+import type { SavedCartRepositoryPort } from '../../application/ports/SavedCartRepositoryPort'
 import { PRODUCT_PRICING } from '../../application/ports/ProductPricingPort'
+import { PAYMENT_GATEWAY } from '../../application/ports/PaymentGatewayPort'
+import type { PaymentGatewayPort } from '../../application/ports/PaymentGatewayPort'
+import { PLAYER_INVENTORY } from '../../application/ports/PlayerInventoryPort'
+import { EVENT_PUBLISHER } from '../../application/ports/EventPublisherPort'
+import type { EventPublisherPort } from '../../application/ports/EventPublisherPort'
+import type { PlayerInventoryPort } from '../../application/ports/PlayerInventoryPort'
 import { CLOCK } from '../../application/ports/ClockPort'
 import { ID_GENERATOR } from '../../application/ports/IdGeneratorPort'
 import type { OrderRepositoryPort } from '../../application/ports/OrderRepositoryPort'
@@ -54,10 +89,15 @@ import { InMemoryOrderRepository } from '../../adapters/outbound/persistence/InM
 import { PostgresOrderRepository } from '../../adapters/outbound/persistence/PostgresOrderRepository'
 import { InMemoryWishlistRepository } from '../../adapters/outbound/persistence/InMemoryWishlistRepository'
 import { PostgresWishlistRepository } from '../../adapters/outbound/persistence/PostgresWishlistRepository'
+import { InMemorySavedCartRepository } from '../../adapters/outbound/persistence/InMemorySavedCartRepository'
+import { PostgresSavedCartRepository } from '../../adapters/outbound/persistence/PostgresSavedCartRepository'
 import {
   DEMO_PRICES,
   LocalCatalogPricing,
 } from '../../adapters/outbound/pricing/LocalCatalogPricing'
+import { SimulatedPaymentGateway } from '../../adapters/outbound/payment/SimulatedPaymentGateway'
+import { InMemoryPlayerInventory } from '../../adapters/outbound/inventory/InMemoryPlayerInventory'
+import { InMemoryEventPublisher } from '../../adapters/outbound/messaging/InMemoryEventPublisher'
 import { SystemClock } from '../../adapters/outbound/system/SystemClock'
 import { UuidGenerator } from '../../adapters/outbound/system/UuidGenerator'
 
@@ -78,6 +118,8 @@ export const APP_CONFIG = Symbol('AppConfig')
 export const LOGGER = Symbol('Logger')
 export const ORDER_DEPENDENCIES = Symbol('OrderDependencies')
 export const WISHLIST_DEPENDENCIES = Symbol('WishlistDependencies')
+export const CHECKOUT_DEPENDENCIES = Symbol('CheckoutDependencies')
+export const SAVED_CART_DEPENDENCIES = Symbol('SavedCartDependencies')
 
 /**
  * Conexion a PostgreSQL, unica por proceso.
@@ -100,7 +142,13 @@ export const DATABASE_CONNECTION = Symbol('DatabaseConnection')
  * framework.
  */
 @Module({
-  controllers: [OrdersController, WishlistController, HealthController],
+  controllers: [
+    OrdersController,
+    WishlistController,
+    CheckoutController,
+    SavedCartController,
+    HealthController,
+  ],
   providers: [
     {
       provide: APP_CONFIG,
@@ -152,6 +200,12 @@ export const DATABASE_CONNECTION = Symbol('DatabaseConnection')
       inject: [DATABASE_CONNECTION],
     },
     {
+      provide: SAVED_CART_REPOSITORY,
+      useFactory: (db: Kysely<Database> | null): SavedCartRepositoryPort =>
+        db === null ? new InMemorySavedCartRepository() : new PostgresSavedCartRepository(db),
+      inject: [DATABASE_CONNECTION],
+    },
+    {
       provide: PRODUCT_PRICING,
       useFactory: (logger: Logger): ProductPricingPort => {
         // El adaptador HTTP hacia Catalog depende de ADR-006. Hasta entonces
@@ -163,6 +217,51 @@ export const DATABASE_CONNECTION = Symbol('DatabaseConnection')
         })
 
         return new LocalCatalogPricing(DEMO_PRICES)
+      },
+      inject: [LOGGER],
+    },
+    {
+      provide: PAYMENT_GATEWAY,
+      useFactory: (logger: Logger): PaymentGatewayPort => {
+        // La unica implementacion registrada es la simulada, y eso es lo que
+        // HU-59 pide. No hay ninguna ruta por la que este servicio pueda
+        // mover dinero real.
+        logger.info('payment_gateway_selected', {
+          adapter: 'simulated',
+          detail: 'HU-59: pasarela academica. No ejecuta movimientos financieros reales.',
+        })
+
+        return new SimulatedPaymentGateway()
+      },
+      inject: [LOGGER],
+    },
+    {
+      provide: PLAYER_INVENTORY,
+      useFactory: (logger: Logger): PlayerInventoryPort => {
+        // Mismo criterio que el adaptador de precios: la integracion HTTP
+        // hacia Player-Inventory necesita un acuerdo entre contextos aprobado.
+        logger.info('inventory_adapter_selected', {
+          adapter: 'in-memory',
+          detail:
+            'El adaptador HTTP hacia Player-Inventory requiere un acuerdo de integracion aprobado.',
+        })
+
+        return new InMemoryPlayerInventory()
+      },
+      inject: [LOGGER],
+    },
+    {
+      provide: EVENT_PUBLISHER,
+      useFactory: (logger: Logger): EventPublisherPort => {
+        // Publicador en proceso. Introducir un broker real exige antes decidir
+        // el patron outbox (EN-027.2): publicar despues de guardar puede
+        // perder el evento si el broker no responde.
+        logger.info('event_publisher_selected', {
+          adapter: 'in-memory',
+          detail: 'Un broker real requiere decidir antes el patron outbox (EN-027.2).',
+        })
+
+        return new InMemoryEventPublisher(logger)
       },
       inject: [LOGGER],
     },
@@ -258,6 +357,22 @@ export const DATABASE_CONNECTION = Symbol('DatabaseConnection')
       inject: [ORDER_DEPENDENCIES],
     },
     {
+      provide: CHANGE_LINE_QUANTITY,
+      useFactory: (deps: OrderDependencies): ChangeOrderLineQuantity =>
+        new ChangeOrderLineQuantity(deps),
+      inject: [ORDER_DEPENDENCIES],
+    },
+    {
+      provide: GET_OR_CREATE_CART,
+      useFactory: (deps: OrderDependencies): GetOrCreateCart => new GetOrCreateCart(deps),
+      inject: [ORDER_DEPENDENCIES],
+    },
+    {
+      provide: GET_CART,
+      useFactory: (orders: OrderRepositoryPort): GetCart => new GetCart(orders),
+      inject: [ORDER_REPOSITORY],
+    },
+    {
       provide: GET_ORDER,
       useFactory: (orders: OrderRepositoryPort): GetOrder => new GetOrder(orders),
       inject: [ORDER_REPOSITORY],
@@ -301,10 +416,64 @@ export const DATABASE_CONNECTION = Symbol('DatabaseConnection')
       inject: [WISHLIST_DEPENDENCIES],
     },
     {
+      provide: CHECKOUT_DEPENDENCIES,
+      useFactory: (
+        orders: OrderRepositoryPort,
+        payments: PaymentGatewayPort,
+        inventory: PlayerInventoryPort,
+        clock: ClockPort,
+        events: EventPublisherPort,
+      ): CheckoutDependencies => ({ orders, payments, inventory, clock, events }),
+      inject: [ORDER_REPOSITORY, PAYMENT_GATEWAY, PLAYER_INVENTORY, CLOCK, EVENT_PUBLISHER],
+    },
+    {
+      provide: CHECKOUT_ORDER,
+      useFactory: (deps: CheckoutDependencies): CheckoutOrder => new CheckoutOrder(deps),
+      inject: [CHECKOUT_DEPENDENCIES],
+    },
+    {
+      provide: CHECKOUT_SUMMARY,
+      useFactory: (orders: OrderRepositoryPort): GetCheckoutSummary =>
+        new GetCheckoutSummary(orders),
+      inject: [ORDER_REPOSITORY],
+    },
+    {
+      provide: SAVED_CART_DEPENDENCIES,
+      useFactory: (
+        savedCarts: SavedCartRepositoryPort,
+        orders: OrderRepositoryPort,
+        ids: IdGeneratorPort,
+      ): SavedCartDependencies => ({ savedCarts, orders, ids }),
+      inject: [SAVED_CART_REPOSITORY, ORDER_REPOSITORY, ID_GENERATOR],
+    },
+    {
+      provide: SAVE_CART,
+      useFactory: (deps: SavedCartDependencies): SaveCart => new SaveCart(deps),
+      inject: [SAVED_CART_DEPENDENCIES],
+    },
+    {
+      provide: RESTORE_SAVED_CART,
+      useFactory: (deps: SavedCartDependencies): RestoreSavedCart => new RestoreSavedCart(deps),
+      inject: [SAVED_CART_DEPENDENCIES],
+    },
+    {
+      provide: GET_SAVED_CART,
+      useFactory: (savedCarts: SavedCartRepositoryPort): GetSavedCart =>
+        new GetSavedCart(savedCarts),
+      inject: [SAVED_CART_REPOSITORY],
+    },
+    {
+      provide: DISCARD_SAVED_CART,
+      useFactory: (savedCarts: SavedCartRepositoryPort): DiscardSavedCart =>
+        new DiscardSavedCart(savedCarts),
+      inject: [SAVED_CART_REPOSITORY],
+    },
+    {
       provide: READINESS_CHECKS,
       useFactory: (
         orders: OrderRepositoryPort,
         wishlist: WishlistRepositoryPort,
+        savedCarts: SavedCartRepositoryPort,
         pricing: ProductPricingPort,
       ): readonly ReadinessCheck[] => [
         // Todas las comprobaciones ejercitan las dependencias de verdad: si
@@ -315,9 +484,13 @@ export const DATABASE_CONNECTION = Symbol('DatabaseConnection')
           name: 'wishlist-repository',
           check: (): boolean => typeof wishlist.findByCustomer === 'function',
         },
+        {
+          name: 'saved-cart-repository',
+          check: (): boolean => typeof savedCarts.findByCustomer === 'function',
+        },
         { name: 'catalog-pricing', check: (): boolean => typeof pricing.priceOf === 'function' },
       ],
-      inject: [ORDER_REPOSITORY, WISHLIST_REPOSITORY, PRODUCT_PRICING],
+      inject: [ORDER_REPOSITORY, WISHLIST_REPOSITORY, SAVED_CART_REPOSITORY, PRODUCT_PRICING],
     },
     {
       provide: VERSION_REPORT,

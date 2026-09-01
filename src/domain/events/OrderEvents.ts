@@ -1,11 +1,28 @@
 import type { DomainEvent } from './DomainEvent'
 
+/**
+ * Linea tal y como viaja en el evento.
+ *
+ * El evento lleva el **detalle** y no solo el recuento porque HU-60 exige que
+ * la confirmacion de compra contenga «el detalle de los productos adquiridos y
+ * el total pagado». Si el evento solo dijera cuantas lineas hubo, quien envia
+ * el correo tendria que volver a preguntarle a Commerce por el pedido, y esa
+ * segunda lectura podria devolver algo distinto de lo que se compro.
+ */
+export interface ConfirmedLine {
+  readonly sku: string
+  readonly quantity: number
+  readonly unitPriceAmount: number
+  readonly subtotalAmount: number
+}
+
 export interface OrderConfirmed extends DomainEvent {
   readonly name: 'commerce.order.confirmed'
   readonly customerId: string
   readonly totalAmount: number
   readonly currency: string
   readonly lineCount: number
+  readonly lines: readonly ConfirmedLine[]
 }
 
 export interface OrderCancelled extends DomainEvent {
@@ -19,7 +36,7 @@ export const orderConfirmed = (params: {
   customerId: string
   totalAmount: number
   currency: string
-  lineCount: number
+  lines: readonly ConfirmedLine[]
   occurredAt: Date
 }): OrderConfirmed => ({
   name: 'commerce.order.confirmed',
@@ -27,7 +44,8 @@ export const orderConfirmed = (params: {
   customerId: params.customerId,
   totalAmount: params.totalAmount,
   currency: params.currency,
-  lineCount: params.lineCount,
+  lineCount: params.lines.length,
+  lines: params.lines,
   occurredAt: params.occurredAt,
 })
 

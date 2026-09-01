@@ -9,6 +9,7 @@ import {
   Inject,
   NotFoundException,
   Param,
+  Patch,
   Post,
   UnprocessableEntityException,
 } from '@nestjs/common'
@@ -22,8 +23,11 @@ import {
 import type {
   AddOrderLine,
   CancelOrder,
+  ChangeOrderLineQuantity,
   ConfirmOrder,
   CreateOrder,
+  GetCart,
+  GetOrCreateCart,
   GetOrder,
   ListCustomerOrders,
   RemoveOrderLine,
@@ -31,13 +35,23 @@ import type {
 import {
   ADD_LINE,
   CANCEL_ORDER,
+  CHANGE_LINE_QUANTITY,
   CONFIRM_ORDER,
   CREATE_ORDER,
+  GET_CART,
+  GET_OR_CREATE_CART,
   GET_ORDER,
   LIST_ORDERS,
   REMOVE_LINE,
 } from './tokens'
-import { AddLineRequest, CancelOrderRequest, CreateOrderRequest, OrderResponse } from './orders.dto'
+import {
+  AddLineRequest,
+  CancelOrderRequest,
+  ChangeLineQuantityRequest,
+  CreateOrderRequest,
+  OpenCartRequest,
+  OrderResponse,
+} from './orders.dto'
 
 import { Role, type VerifiedIdentity } from '../../../application/ports/TokenVerifierPort'
 import { CurrentIdentity } from './auth/decorators'
@@ -61,6 +75,9 @@ export class OrdersController {
     @Inject(CANCEL_ORDER) private readonly cancelOrder: CancelOrder,
     @Inject(GET_ORDER) private readonly getOrder: GetOrder,
     @Inject(LIST_ORDERS) private readonly listOrders: ListCustomerOrders,
+    @Inject(CHANGE_LINE_QUANTITY) private readonly changeLineQuantity: ChangeOrderLineQuantity,
+    @Inject(GET_CART) private readonly getCart: GetCart,
+    @Inject(GET_OR_CREATE_CART) private readonly getOrCreateCart: GetOrCreateCart,
   ) {}
 
   @Post()
@@ -91,6 +108,46 @@ export class OrdersController {
       // Ya no hay parametro `customerId`. Listar los pedidos de otra persona
       // era cuestion de cambiar un valor en la cadena de consulta.
       return await this.listOrders.execute(identity.subject)
+    } catch (error: unknown) {
+      throw OrdersController.translate(error)
+    }
+  }
+
+  /**
+   * El carrito vigente del cliente.
+   *
+   * Se declara ANTES de `:orderId`: NestJS resuelve las rutas en el orden en
+   * que se registran, y con el orden inverso `cart` se interpretaria como el
+   * identificador de un pedido y esta ruta no se alcanzaria nunca.
+   */
+  @Get('cart')
+  @ApiOperation({ summary: 'Recupera el carrito vigente de quien realiza la peticion' })
+  @ApiResponse({ status: 200, description: 'Carrito vigente', type: OrderResponse })
+  @ApiResponse({ status: 404, description: 'El cliente no tiene ningun carrito abierto' })
+  async cart(@CurrentIdentity() identity: VerifiedIdentity): Promise<OrderResponse> {
+    const found = await this.getCart.execute(identity.subject)
+
+    if (found === null) {
+      // 404 y no un carrito vacio inventado: un carrito que no existe y uno
+      // vacio son estados distintos, y la interfaz necesita distinguirlos.
+      throw new NotFoundException('No hay un carrito abierto para este cliente.')
+    }
+
+    return found
+  }
+
+  @Post('cart')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Abre el carrito del cliente, o devuelve el que ya tenia' })
+  @ApiResponse({ status: 200, description: 'Carrito vigente', type: OrderResponse })
+  @ApiResponse({ status: 400, description: 'Moneda no soportada' })
+  async openCart(
+    @Body() body: OpenCartRequest,
+    @CurrentIdentity() identity: VerifiedIdentity,
+  ): Promise<OrderResponse> {
+    try {
+      // Idempotente: llamarlo dos veces no abre dos carritos.
+      return await this.getOrCreateCart.execute(identity.subject, body.currency)
     } catch (error: unknown) {
       throw OrdersController.translate(error)
     }
@@ -127,6 +184,27 @@ export class OrdersController {
       await this.assertOwned(orderId, identity)
 
       return await this.addLine.execute({ orderId, sku: body.sku, quantity: body.quantity })
+    } catch (error: unknown) {
+      throw OrdersController.translate(error)
+    }
+  }
+
+  @Patch(':orderId/lines/:sku')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Fija la cantidad de una referencia del pedido' })
+  @ApiResponse({ status: 200, description: 'Pedido actualizado', type: OrderResponse })
+  @ApiResponse({ status: 400, description: 'La referencia no esta en el pedido o no es editable' })
+  @ApiResponse({ status: 404, description: 'El pedido no existe' })
+  async changeQuantity(
+    @Param('orderId') orderId: string,
+    @Param('sku') sku: string,
+    @Body() body: ChangeLineQuantityRequest,
+    @CurrentIdentity() identity: VerifiedIdentity,
+  ): Promise<OrderResponse> {
+    try {
+      await this.assertOwned(orderId, identity)
+
+      return await this.changeLineQuantity.execute({ orderId, sku, quantity: body.quantity })
     } catch (error: unknown) {
       throw OrdersController.translate(error)
     }
