@@ -5,6 +5,7 @@ import type { OrderRepositoryPort } from '../ports/OrderRepositoryPort'
 import type { ClockPort } from '../ports/ClockPort'
 import type { CardDetails, PaymentGatewayPort } from '../ports/PaymentGatewayPort'
 import type { PlayerInventoryPort } from '../ports/PlayerInventoryPort'
+import type { EventPublisherPort } from '../ports/EventPublisherPort'
 import { toOrderDto, type OrderDto } from '../dto/OrderDto'
 
 export interface CheckoutDependencies {
@@ -12,6 +13,7 @@ export interface CheckoutDependencies {
   readonly payments: PaymentGatewayPort
   readonly inventory: PlayerInventoryPort
   readonly clock: ClockPort
+  readonly events: EventPublisherPort
 }
 
 export interface CheckoutCommand {
@@ -147,6 +149,12 @@ export class CheckoutOrder {
     order.confirm(this.deps.clock.now())
 
     await this.deps.orders.save(order)
+
+    // 4. El evento sale DESPUES de guardar, y solo si todo lo anterior salio
+    // bien: HU-60 exige que no se genere confirmacion de una transaccion que
+    // no se completo. `pullEvents` vacia la cola del agregado, asi que un
+    // reintento posterior no reemite el mismo evento.
+    await this.deps.events.publish(order.pullEvents())
 
     return {
       order: toOrderDto(order.toSnapshot()),
