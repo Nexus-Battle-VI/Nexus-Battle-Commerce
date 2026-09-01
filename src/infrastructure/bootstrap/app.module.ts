@@ -74,6 +74,8 @@ import { PRODUCT_PRICING } from '../../application/ports/ProductPricingPort'
 import { PAYMENT_GATEWAY } from '../../application/ports/PaymentGatewayPort'
 import type { PaymentGatewayPort } from '../../application/ports/PaymentGatewayPort'
 import { PLAYER_INVENTORY } from '../../application/ports/PlayerInventoryPort'
+import { EVENT_PUBLISHER } from '../../application/ports/EventPublisherPort'
+import type { EventPublisherPort } from '../../application/ports/EventPublisherPort'
 import type { PlayerInventoryPort } from '../../application/ports/PlayerInventoryPort'
 import { CLOCK } from '../../application/ports/ClockPort'
 import { ID_GENERATOR } from '../../application/ports/IdGeneratorPort'
@@ -95,6 +97,7 @@ import {
 } from '../../adapters/outbound/pricing/LocalCatalogPricing'
 import { SimulatedPaymentGateway } from '../../adapters/outbound/payment/SimulatedPaymentGateway'
 import { InMemoryPlayerInventory } from '../../adapters/outbound/inventory/InMemoryPlayerInventory'
+import { InMemoryEventPublisher } from '../../adapters/outbound/messaging/InMemoryEventPublisher'
 import { SystemClock } from '../../adapters/outbound/system/SystemClock'
 import { UuidGenerator } from '../../adapters/outbound/system/UuidGenerator'
 
@@ -244,6 +247,21 @@ export const DATABASE_CONNECTION = Symbol('DatabaseConnection')
         })
 
         return new InMemoryPlayerInventory()
+      },
+      inject: [LOGGER],
+    },
+    {
+      provide: EVENT_PUBLISHER,
+      useFactory: (logger: Logger): EventPublisherPort => {
+        // Publicador en proceso. Introducir un broker real exige antes decidir
+        // el patron outbox (EN-027.2): publicar despues de guardar puede
+        // perder el evento si el broker no responde.
+        logger.info('event_publisher_selected', {
+          adapter: 'in-memory',
+          detail: 'Un broker real requiere decidir antes el patron outbox (EN-027.2).',
+        })
+
+        return new InMemoryEventPublisher(logger)
       },
       inject: [LOGGER],
     },
@@ -404,8 +422,9 @@ export const DATABASE_CONNECTION = Symbol('DatabaseConnection')
         payments: PaymentGatewayPort,
         inventory: PlayerInventoryPort,
         clock: ClockPort,
-      ): CheckoutDependencies => ({ orders, payments, inventory, clock }),
-      inject: [ORDER_REPOSITORY, PAYMENT_GATEWAY, PLAYER_INVENTORY, CLOCK],
+        events: EventPublisherPort,
+      ): CheckoutDependencies => ({ orders, payments, inventory, clock, events }),
+      inject: [ORDER_REPOSITORY, PAYMENT_GATEWAY, PLAYER_INVENTORY, CLOCK, EVENT_PUBLISHER],
     },
     {
       provide: CHECKOUT_ORDER,

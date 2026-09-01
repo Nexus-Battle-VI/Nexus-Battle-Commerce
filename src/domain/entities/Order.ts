@@ -257,7 +257,14 @@ export class Order {
         customerId: this.customerId.value,
         totalAmount: total.amount,
         currency: total.currency,
-        lineCount: this.lines.length,
+        // El detalle viaja en el evento: quien envie la confirmacion no tiene
+        // que volver a preguntar por el pedido para saber que se compro.
+        lines: this.toSnapshot().lines.map((line) => ({
+          sku: line.sku,
+          quantity: line.quantity,
+          unitPriceAmount: line.unitPriceAmount,
+          subtotalAmount: line.subtotalAmount,
+        })),
         occurredAt,
       }),
     )

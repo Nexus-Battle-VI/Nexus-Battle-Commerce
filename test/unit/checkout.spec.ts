@@ -12,6 +12,7 @@ import { OrderNotFoundError } from '../../src/application/errors/ApplicationErro
 import { InMemoryOrderRepository } from '../../src/adapters/outbound/persistence/InMemoryOrderRepository'
 import { InMemoryPlayerInventory } from '../../src/adapters/outbound/inventory/InMemoryPlayerInventory'
 import { SimulatedPaymentGateway } from '../../src/adapters/outbound/payment/SimulatedPaymentGateway'
+import { InMemoryEventPublisher } from '../../src/adapters/outbound/messaging/InMemoryEventPublisher'
 import {
   DEMO_PRICES,
   LocalCatalogPricing,
@@ -52,9 +53,12 @@ const buildHarness = (inventory: PlayerInventoryPort = new InMemoryPlayerInvento
     ids: sequence('ord'),
   }
 
+  const events = new InMemoryEventPublisher()
+
   return {
     orders,
     inventory,
+    events,
     openCart: new GetOrCreateCart({ ...orderDeps, ids: { generate: orderDeps.ids } }),
     add: new AddOrderLine({ ...orderDeps, ids: { generate: orderDeps.ids } }),
     getCart: new GetCart(orders),
@@ -64,6 +68,7 @@ const buildHarness = (inventory: PlayerInventoryPort = new InMemoryPlayerInvento
       payments: new SimulatedPaymentGateway(),
       inventory,
       clock,
+      events,
     }),
   }
 }
