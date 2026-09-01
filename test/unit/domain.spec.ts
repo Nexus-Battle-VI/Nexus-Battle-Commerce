@@ -230,6 +230,7 @@ describe('Order', () => {
       status: OrderStatus.Draft,
       currency: 'COP',
       totalAmount: 18_000,
+      itemCount: 4,
       lines: [
         { sku: 'arco', unitPriceAmount: 12_000, quantity: 1, subtotalAmount: 12_000 },
         { sku: 'pocion', unitPriceAmount: 2_000, quantity: 3, subtotalAmount: 6_000 },

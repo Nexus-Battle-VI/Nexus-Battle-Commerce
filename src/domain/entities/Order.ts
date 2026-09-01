@@ -31,6 +31,8 @@ export interface OrderSnapshot {
   readonly status: OrderStatus
   readonly currency: string
   readonly totalAmount: number
+  /** Suma de las cantidades. Derivado, como el total: no se persiste. */
+  readonly itemCount: number
   readonly lines: readonly OrderLineSnapshot[]
 }
 
@@ -130,6 +132,17 @@ export class Order {
     return this.lines.length
   }
 
+  /**
+   * Numero de unidades del pedido: suma de las cantidades de sus lineas.
+   *
+   * Es lo que la vista minimizada del carrito muestra junto al icono. Se
+   * distingue de `lineCount`, que cuenta referencias distintas: dos unidades de
+   * una misma espada son un `lineCount` de 1 y un `itemCount` de 2.
+   */
+  get itemCount(): number {
+    return this.lines.reduce((total, line) => total + line.quantity.value, 0)
+  }
+
   get isEmpty(): boolean {
     return this.lines.length === 0
   }
@@ -187,6 +200,30 @@ export class Order {
     }
 
     existing.quantity = existing.quantity.plus(quantity)
+  }
+
+  /**
+   * Fija la cantidad de una linea a un valor exacto.
+   *
+   * Es una operacion distinta de `addLine`, que **acumula**. Quien modifica la
+   * cantidad desde el carrito indica cuantas unidades quiere en total, no
+   * cuantas quiere anadir; resolverlo con `addLine` obligaria a la interfaz a
+   * calcular la diferencia, y ese calculo es justo la clase de regla que no
+   * debe vivir en el cliente.
+   *
+   * El precio unitario NO se recalcula: sigue siendo el que se pacto al anadir
+   * la linea, por la misma razon que `addLine` lo conserva.
+   */
+  changeLineQuantity(sku: Sku, quantity: Quantity): void {
+    this.assertEditable()
+
+    const line = this.lines.find((candidate) => candidate.sku.equals(sku))
+
+    if (line === undefined) {
+      throw new DomainError(`El pedido ${this.id.value} no contiene la referencia "${sku.value}".`)
+    }
+
+    line.quantity = quantity
   }
 
   removeLine(sku: Sku): void {
@@ -259,6 +296,7 @@ export class Order {
       status: this.status,
       currency: this.currency,
       totalAmount: total.amount,
+      itemCount: this.itemCount,
       lines: this.lines
         .map((line) => ({
           sku: line.sku.value,

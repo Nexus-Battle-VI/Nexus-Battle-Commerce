@@ -8,8 +8,11 @@ import { HealthController } from '../../adapters/inbound/http/health.controller'
 import {
   ADD_LINE,
   CANCEL_ORDER,
+  CHANGE_LINE_QUANTITY,
   CONFIRM_ORDER,
   CREATE_ORDER,
+  GET_CART,
+  GET_OR_CREATE_CART,
   GET_ORDER,
   LIST_ORDERS,
   REMOVE_LINE,
@@ -25,8 +28,11 @@ import { READINESS_CHECKS, VERSION_REPORT } from '../../adapters/inbound/http/to
 import {
   AddOrderLine,
   CancelOrder,
+  ChangeOrderLineQuantity,
   ConfirmOrder,
   CreateOrder,
+  GetCart,
+  GetOrCreateCart,
   GetOrder,
   ListCustomerOrders,
   RemoveOrderLine,
@@ -256,6 +262,22 @@ export const DATABASE_CONNECTION = Symbol('DatabaseConnection')
       provide: CANCEL_ORDER,
       useFactory: (deps: OrderDependencies): CancelOrder => new CancelOrder(deps),
       inject: [ORDER_DEPENDENCIES],
+    },
+    {
+      provide: CHANGE_LINE_QUANTITY,
+      useFactory: (deps: OrderDependencies): ChangeOrderLineQuantity =>
+        new ChangeOrderLineQuantity(deps),
+      inject: [ORDER_DEPENDENCIES],
+    },
+    {
+      provide: GET_OR_CREATE_CART,
+      useFactory: (deps: OrderDependencies): GetOrCreateCart => new GetOrCreateCart(deps),
+      inject: [ORDER_DEPENDENCIES],
+    },
+    {
+      provide: GET_CART,
+      useFactory: (orders: OrderRepositoryPort): GetCart => new GetCart(orders),
+      inject: [ORDER_REPOSITORY],
     },
     {
       provide: GET_ORDER,

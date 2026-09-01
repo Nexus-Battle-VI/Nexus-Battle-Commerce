@@ -39,6 +39,27 @@ export class AddLineRequest {
   quantity!: number
 }
 
+/**
+ * Contrato de cambio de cantidad.
+ *
+ * La cantidad es el **total deseado** de unidades, no un incremento: quien usa
+ * el carrito indica cuantas quiere, y la diferencia la calcula el dominio.
+ */
+export class ChangeLineQuantityRequest {
+  @ApiProperty({ example: 3, minimum: 1, maximum: 999 })
+  @IsInt()
+  @Min(1)
+  @Max(999)
+  quantity!: number
+}
+
+/** Moneda con la que se abre el carrito si el cliente no tenia ninguno. */
+export class OpenCartRequest {
+  @ApiProperty({ example: 'COP', enum: ['COP', 'USD', 'EUR'] })
+  @IsIn(['COP', 'USD', 'EUR'])
+  currency!: string
+}
+
 export class CancelOrderRequest {
   @ApiProperty({ example: 'Solicitado por la persona cliente', maxLength: 200 })
   @IsString()
@@ -75,6 +96,12 @@ export class OrderResponse {
 
   @ApiProperty({ example: 30000, description: 'Suma de los subtotales de las lineas' })
   readonly total!: number
+
+  @ApiProperty({
+    example: 5,
+    description: 'Suma de las cantidades. Es lo que muestra el carrito minimizado',
+  })
+  readonly itemCount!: number
 
   @ApiProperty({ type: OrderLineResponse, isArray: true })
   readonly lines!: readonly OrderLineResponse[]
