@@ -28,6 +28,7 @@ const config: Config = {
   // Entre las dos configuraciones no queda codigo sin medir.
   collectCoverageFrom: [
     'src/adapters/outbound/persistence/PostgresOrderRepository.ts',
+    'src/adapters/outbound/persistence/PostgresWishlistRepository.ts',
     'src/infrastructure/persistence/**/*.ts',
     '!src/infrastructure/persistence/migrate.ts',
   ],
