@@ -4,6 +4,7 @@ import type { Kysely } from 'kysely'
 
 import { OrdersController } from '../../adapters/inbound/http/orders.controller'
 import { WishlistController } from '../../adapters/inbound/http/wishlist.controller'
+import { CheckoutController } from '../../adapters/inbound/http/checkout.controller'
 import { HealthController } from '../../adapters/inbound/http/health.controller'
 import {
   ADD_LINE,
@@ -23,6 +24,7 @@ import {
   LIST_WISHLIST,
   REMOVE_FROM_WISHLIST,
 } from '../../adapters/inbound/http/tokens.wishlist'
+import { CHECKOUT_ORDER, CHECKOUT_SUMMARY } from '../../adapters/inbound/http/tokens.checkout'
 import { READINESS_CHECKS, VERSION_REPORT } from '../../adapters/inbound/http/tokens.health'
 
 import {
@@ -45,9 +47,18 @@ import {
   RemoveFromWishlist,
   type WishlistDependencies,
 } from '../../application/use-cases/WishlistUseCases'
+import {
+  CheckoutOrder,
+  GetCheckoutSummary,
+  type CheckoutDependencies,
+} from '../../application/use-cases/CheckoutUseCases'
 import { ORDER_REPOSITORY } from '../../application/ports/OrderRepositoryPort'
 import { WISHLIST_REPOSITORY } from '../../application/ports/WishlistRepositoryPort'
 import { PRODUCT_PRICING } from '../../application/ports/ProductPricingPort'
+import { PAYMENT_GATEWAY } from '../../application/ports/PaymentGatewayPort'
+import type { PaymentGatewayPort } from '../../application/ports/PaymentGatewayPort'
+import { PLAYER_INVENTORY } from '../../application/ports/PlayerInventoryPort'
+import type { PlayerInventoryPort } from '../../application/ports/PlayerInventoryPort'
 import { CLOCK } from '../../application/ports/ClockPort'
 import { ID_GENERATOR } from '../../application/ports/IdGeneratorPort'
 import type { OrderRepositoryPort } from '../../application/ports/OrderRepositoryPort'
@@ -64,6 +75,8 @@ import {
   DEMO_PRICES,
   LocalCatalogPricing,
 } from '../../adapters/outbound/pricing/LocalCatalogPricing'
+import { SimulatedPaymentGateway } from '../../adapters/outbound/payment/SimulatedPaymentGateway'
+import { InMemoryPlayerInventory } from '../../adapters/outbound/inventory/InMemoryPlayerInventory'
 import { SystemClock } from '../../adapters/outbound/system/SystemClock'
 import { UuidGenerator } from '../../adapters/outbound/system/UuidGenerator'
 
@@ -84,6 +97,7 @@ export const APP_CONFIG = Symbol('AppConfig')
 export const LOGGER = Symbol('Logger')
 export const ORDER_DEPENDENCIES = Symbol('OrderDependencies')
 export const WISHLIST_DEPENDENCIES = Symbol('WishlistDependencies')
+export const CHECKOUT_DEPENDENCIES = Symbol('CheckoutDependencies')
 
 /**
  * Conexion a PostgreSQL, unica por proceso.
@@ -106,7 +120,7 @@ export const DATABASE_CONNECTION = Symbol('DatabaseConnection')
  * framework.
  */
 @Module({
-  controllers: [OrdersController, WishlistController, HealthController],
+  controllers: [OrdersController, WishlistController, CheckoutController, HealthController],
   providers: [
     {
       provide: APP_CONFIG,
@@ -169,6 +183,36 @@ export const DATABASE_CONNECTION = Symbol('DatabaseConnection')
         })
 
         return new LocalCatalogPricing(DEMO_PRICES)
+      },
+      inject: [LOGGER],
+    },
+    {
+      provide: PAYMENT_GATEWAY,
+      useFactory: (logger: Logger): PaymentGatewayPort => {
+        // La unica implementacion registrada es la simulada, y eso es lo que
+        // HU-59 pide. No hay ninguna ruta por la que este servicio pueda
+        // mover dinero real.
+        logger.info('payment_gateway_selected', {
+          adapter: 'simulated',
+          detail: 'HU-59: pasarela academica. No ejecuta movimientos financieros reales.',
+        })
+
+        return new SimulatedPaymentGateway()
+      },
+      inject: [LOGGER],
+    },
+    {
+      provide: PLAYER_INVENTORY,
+      useFactory: (logger: Logger): PlayerInventoryPort => {
+        // Mismo criterio que el adaptador de precios: la integracion HTTP
+        // hacia Player-Inventory necesita un acuerdo entre contextos aprobado.
+        logger.info('inventory_adapter_selected', {
+          adapter: 'in-memory',
+          detail:
+            'El adaptador HTTP hacia Player-Inventory requiere un acuerdo de integracion aprobado.',
+        })
+
+        return new InMemoryPlayerInventory()
       },
       inject: [LOGGER],
     },
@@ -321,6 +365,27 @@ export const DATABASE_CONNECTION = Symbol('DatabaseConnection')
       provide: LIST_WISHLIST,
       useFactory: (deps: WishlistDependencies): ListWishlist => new ListWishlist(deps),
       inject: [WISHLIST_DEPENDENCIES],
+    },
+    {
+      provide: CHECKOUT_DEPENDENCIES,
+      useFactory: (
+        orders: OrderRepositoryPort,
+        payments: PaymentGatewayPort,
+        inventory: PlayerInventoryPort,
+        clock: ClockPort,
+      ): CheckoutDependencies => ({ orders, payments, inventory, clock }),
+      inject: [ORDER_REPOSITORY, PAYMENT_GATEWAY, PLAYER_INVENTORY, CLOCK],
+    },
+    {
+      provide: CHECKOUT_ORDER,
+      useFactory: (deps: CheckoutDependencies): CheckoutOrder => new CheckoutOrder(deps),
+      inject: [CHECKOUT_DEPENDENCIES],
+    },
+    {
+      provide: CHECKOUT_SUMMARY,
+      useFactory: (orders: OrderRepositoryPort): GetCheckoutSummary =>
+        new GetCheckoutSummary(orders),
+      inject: [ORDER_REPOSITORY],
     },
     {
       provide: READINESS_CHECKS,
