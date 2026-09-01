@@ -13,6 +13,8 @@ export interface OrderDto {
   readonly status: string
   readonly currency: string
   readonly total: number
+  /** Unidades en el carrito: lo que muestra la vista minimizada. */
+  readonly itemCount: number
   readonly lines: readonly OrderLineDto[]
 }
 
@@ -22,6 +24,7 @@ export const toOrderDto = (snapshot: OrderSnapshot): OrderDto => ({
   status: snapshot.status,
   currency: snapshot.currency,
   total: snapshot.totalAmount,
+  itemCount: snapshot.itemCount,
   lines: snapshot.lines.map((line) => ({
     sku: line.sku,
     unitPrice: line.unitPriceAmount,

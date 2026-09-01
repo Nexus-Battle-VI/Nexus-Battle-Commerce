@@ -33,6 +33,9 @@ const snapshotOf = (lines: OrderSnapshot['lines']): OrderSnapshot => ({
   status: OrderStatus.Draft,
   currency: 'COP',
   totalAmount: 0,
+  // Derivado, igual que el total: la traduccion a filas lo descarta, porque
+  // `toLineRows` solo escribe lo que el agregado no puede recalcular.
+  itemCount: lines.reduce((total, current) => total + current.quantity, 0),
   lines,
 })
 
