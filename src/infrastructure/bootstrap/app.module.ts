@@ -5,6 +5,7 @@ import type { Kysely } from 'kysely'
 import { OrdersController } from '../../adapters/inbound/http/orders.controller'
 import { WishlistController } from '../../adapters/inbound/http/wishlist.controller'
 import { CheckoutController } from '../../adapters/inbound/http/checkout.controller'
+import { SavedCartController } from '../../adapters/inbound/http/saved-cart.controller'
 import { HealthController } from '../../adapters/inbound/http/health.controller'
 import {
   ADD_LINE,
@@ -25,6 +26,12 @@ import {
   REMOVE_FROM_WISHLIST,
 } from '../../adapters/inbound/http/tokens.wishlist'
 import { CHECKOUT_ORDER, CHECKOUT_SUMMARY } from '../../adapters/inbound/http/tokens.checkout'
+import {
+  DISCARD_SAVED_CART,
+  GET_SAVED_CART,
+  RESTORE_SAVED_CART,
+  SAVE_CART,
+} from '../../adapters/inbound/http/tokens.saved-cart'
 import { READINESS_CHECKS, VERSION_REPORT } from '../../adapters/inbound/http/tokens.health'
 
 import {
@@ -52,8 +59,17 @@ import {
   GetCheckoutSummary,
   type CheckoutDependencies,
 } from '../../application/use-cases/CheckoutUseCases'
+import {
+  DiscardSavedCart,
+  GetSavedCart,
+  RestoreSavedCart,
+  SaveCart,
+  type SavedCartDependencies,
+} from '../../application/use-cases/SavedCartUseCases'
 import { ORDER_REPOSITORY } from '../../application/ports/OrderRepositoryPort'
 import { WISHLIST_REPOSITORY } from '../../application/ports/WishlistRepositoryPort'
+import { SAVED_CART_REPOSITORY } from '../../application/ports/SavedCartRepositoryPort'
+import type { SavedCartRepositoryPort } from '../../application/ports/SavedCartRepositoryPort'
 import { PRODUCT_PRICING } from '../../application/ports/ProductPricingPort'
 import { PAYMENT_GATEWAY } from '../../application/ports/PaymentGatewayPort'
 import type { PaymentGatewayPort } from '../../application/ports/PaymentGatewayPort'
@@ -71,6 +87,8 @@ import { InMemoryOrderRepository } from '../../adapters/outbound/persistence/InM
 import { PostgresOrderRepository } from '../../adapters/outbound/persistence/PostgresOrderRepository'
 import { InMemoryWishlistRepository } from '../../adapters/outbound/persistence/InMemoryWishlistRepository'
 import { PostgresWishlistRepository } from '../../adapters/outbound/persistence/PostgresWishlistRepository'
+import { InMemorySavedCartRepository } from '../../adapters/outbound/persistence/InMemorySavedCartRepository'
+import { PostgresSavedCartRepository } from '../../adapters/outbound/persistence/PostgresSavedCartRepository'
 import {
   DEMO_PRICES,
   LocalCatalogPricing,
@@ -98,6 +116,7 @@ export const LOGGER = Symbol('Logger')
 export const ORDER_DEPENDENCIES = Symbol('OrderDependencies')
 export const WISHLIST_DEPENDENCIES = Symbol('WishlistDependencies')
 export const CHECKOUT_DEPENDENCIES = Symbol('CheckoutDependencies')
+export const SAVED_CART_DEPENDENCIES = Symbol('SavedCartDependencies')
 
 /**
  * Conexion a PostgreSQL, unica por proceso.
@@ -120,7 +139,13 @@ export const DATABASE_CONNECTION = Symbol('DatabaseConnection')
  * framework.
  */
 @Module({
-  controllers: [OrdersController, WishlistController, CheckoutController, HealthController],
+  controllers: [
+    OrdersController,
+    WishlistController,
+    CheckoutController,
+    SavedCartController,
+    HealthController,
+  ],
   providers: [
     {
       provide: APP_CONFIG,
@@ -169,6 +194,12 @@ export const DATABASE_CONNECTION = Symbol('DatabaseConnection')
       provide: WISHLIST_REPOSITORY,
       useFactory: (db: Kysely<Database> | null): WishlistRepositoryPort =>
         db === null ? new InMemoryWishlistRepository() : new PostgresWishlistRepository(db),
+      inject: [DATABASE_CONNECTION],
+    },
+    {
+      provide: SAVED_CART_REPOSITORY,
+      useFactory: (db: Kysely<Database> | null): SavedCartRepositoryPort =>
+        db === null ? new InMemorySavedCartRepository() : new PostgresSavedCartRepository(db),
       inject: [DATABASE_CONNECTION],
     },
     {
@@ -388,10 +419,42 @@ export const DATABASE_CONNECTION = Symbol('DatabaseConnection')
       inject: [ORDER_REPOSITORY],
     },
     {
+      provide: SAVED_CART_DEPENDENCIES,
+      useFactory: (
+        savedCarts: SavedCartRepositoryPort,
+        orders: OrderRepositoryPort,
+        ids: IdGeneratorPort,
+      ): SavedCartDependencies => ({ savedCarts, orders, ids }),
+      inject: [SAVED_CART_REPOSITORY, ORDER_REPOSITORY, ID_GENERATOR],
+    },
+    {
+      provide: SAVE_CART,
+      useFactory: (deps: SavedCartDependencies): SaveCart => new SaveCart(deps),
+      inject: [SAVED_CART_DEPENDENCIES],
+    },
+    {
+      provide: RESTORE_SAVED_CART,
+      useFactory: (deps: SavedCartDependencies): RestoreSavedCart => new RestoreSavedCart(deps),
+      inject: [SAVED_CART_DEPENDENCIES],
+    },
+    {
+      provide: GET_SAVED_CART,
+      useFactory: (savedCarts: SavedCartRepositoryPort): GetSavedCart =>
+        new GetSavedCart(savedCarts),
+      inject: [SAVED_CART_REPOSITORY],
+    },
+    {
+      provide: DISCARD_SAVED_CART,
+      useFactory: (savedCarts: SavedCartRepositoryPort): DiscardSavedCart =>
+        new DiscardSavedCart(savedCarts),
+      inject: [SAVED_CART_REPOSITORY],
+    },
+    {
       provide: READINESS_CHECKS,
       useFactory: (
         orders: OrderRepositoryPort,
         wishlist: WishlistRepositoryPort,
+        savedCarts: SavedCartRepositoryPort,
         pricing: ProductPricingPort,
       ): readonly ReadinessCheck[] => [
         // Todas las comprobaciones ejercitan las dependencias de verdad: si
@@ -402,9 +465,13 @@ export const DATABASE_CONNECTION = Symbol('DatabaseConnection')
           name: 'wishlist-repository',
           check: (): boolean => typeof wishlist.findByCustomer === 'function',
         },
+        {
+          name: 'saved-cart-repository',
+          check: (): boolean => typeof savedCarts.findByCustomer === 'function',
+        },
         { name: 'catalog-pricing', check: (): boolean => typeof pricing.priceOf === 'function' },
       ],
-      inject: [ORDER_REPOSITORY, WISHLIST_REPOSITORY, PRODUCT_PRICING],
+      inject: [ORDER_REPOSITORY, WISHLIST_REPOSITORY, SAVED_CART_REPOSITORY, PRODUCT_PRICING],
     },
     {
       provide: VERSION_REPORT,

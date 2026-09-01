@@ -82,8 +82,30 @@ export interface WishlistItemsTable {
   readonly created_at: Generated<Date>
 }
 
+/**
+ * Carrito que el cliente guardo para una sesion posterior (HU-61).
+ *
+ * Es una tabla aparte de `order_lines` a proposito: el borrador es el carrito
+ * de la sesion en curso y este es la copia que el cliente pidio conservar.
+ * Compartir tabla obligaria a una columna que distinguiera ambos usos, y con
+ * ella a que toda consulta de pedidos recordara filtrarla.
+ *
+ * Guarda el precio unitario porque lo que se recupera es lo que se guardo, no
+ * lo que el catalogo cueste al volver. No guarda subtotal ni total: se derivan.
+ */
+export interface SavedCartItemsTable {
+  readonly customer_id: string
+  readonly sku: string
+  readonly currency: string
+  /** `bigint` como cadena, por la misma razon que en `order_lines`. */
+  readonly unit_price_amount: string
+  readonly quantity: number
+  readonly saved_at: Generated<Date>
+}
+
 export interface Database {
   readonly orders: OrdersTable
   readonly order_lines: OrderLinesTable
   readonly wishlist_items: WishlistItemsTable
+  readonly saved_cart_items: SavedCartItemsTable
 }
