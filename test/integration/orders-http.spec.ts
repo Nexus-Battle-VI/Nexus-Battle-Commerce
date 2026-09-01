@@ -259,6 +259,7 @@ describe('Sondas de salud', () => {
       status: 'ok',
       checks: {
         'orders-repository': 'ok',
+        'saved-cart-repository': 'ok',
         'wishlist-repository': 'ok',
         'catalog-pricing': 'ok',
       },

@@ -65,7 +65,7 @@ const STATUSES: readonly string[] = Object.values(OrderStatus)
  * Se comprueba que la conversion sea exacta comparando el texto de vuelta. Si no
  * lo es, se falla: un importe redondeado es peor que un error.
  */
-const toExactAmount = (raw: string, contexto: string): number => {
+export const toExactAmount = (raw: string, contexto: string): number => {
   const parsed = Number(raw)
 
   if (!Number.isInteger(parsed) || String(parsed) !== raw.trim()) {

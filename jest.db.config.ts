@@ -29,6 +29,7 @@ const config: Config = {
   collectCoverageFrom: [
     'src/adapters/outbound/persistence/PostgresOrderRepository.ts',
     'src/adapters/outbound/persistence/PostgresWishlistRepository.ts',
+    'src/adapters/outbound/persistence/PostgresSavedCartRepository.ts',
     'src/infrastructure/persistence/**/*.ts',
     '!src/infrastructure/persistence/migrate.ts',
   ],
