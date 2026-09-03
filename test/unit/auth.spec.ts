@@ -316,6 +316,11 @@ describe('Configuracion de autenticacion', () => {
       COGNITO_USER_POOL_ID: 'us-east-1_abc',
       COGNITO_CLIENT_ID: 'cliente',
       CATALOG_INTERNAL_URL: 'http://catalog:3003',
+      PERSISTENCE_DRIVER: 'postgres',
+      DATABASE_URL: 'postgres://test:test@localhost/test',
+      INVENTORY_INTERNAL_URL: 'http://inventory:3002',
+      NOTIFICATIONS_INTERNAL_URL: 'http://notifications:3003',
+      ACCOUNT_URL: 'http://account:3000',
       INTERNAL_SERVICE_AUTH_SECRET: 'secreto-ficticio-de-pruebas',
     })
 

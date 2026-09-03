@@ -139,12 +139,26 @@ describe('API del pago simulado', () => {
     },
   )
 
-  it('responde 400 con datos de tarjeta mal formados', async () => {
+  it('responde 400 con datos documentados vacios', async () => {
     const id = await orderReadyToPay()
 
-    expect((await pay(id, { ...VALID_CARD, expiry: '13/30' })).status).toBe(400)
-    expect((await pay(id, { ...VALID_CARD, securityCode: '12' })).status).toBe(400)
-    expect((await pay(id, { ...VALID_CARD, number: 'abcd' })).status).toBe(400)
+    expect((await pay(id, { ...VALID_CARD, expiry: ' ' })).status).toBe(400)
+    expect((await pay(id, { ...VALID_CARD, securityCode: '' })).status).toBe(400)
+    expect((await pay(id, { ...VALID_CARD, number: ' ' })).status).toBe(400)
+    expect((await pay(id, { ...VALID_CARD, holder: ' ' })).status).toBe(400)
+  })
+
+  it('acepta los cuatro datos sin inventar validaciones bancarias', async () => {
+    const id = await orderReadyToPay()
+    const result = await pay(id, {
+      holder: 'A',
+      number: 'abcd',
+      expiry: 'despues',
+      securityCode: 'x',
+    })
+    expect(result.status).toBe(200)
+    expect(result.body.realMoneyMoved).toBe(false)
+    expect(result.body.maskedCard).toBe('****')
   })
 
   it('rechaza campos no declarados en el contrato', async () => {

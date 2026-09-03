@@ -47,6 +47,10 @@ export interface AppConfig {
   readonly internalServiceAuthSecret: string | null
   readonly internalServiceName: string
   readonly internalTimeoutMs: number
+  readonly integrationMode: 'http' | 'local'
+  readonly inventoryInternalUrl: string | null
+  readonly notificationsInternalUrl: string | null
+  readonly accountUrl: string | null
 }
 
 type RawEnv = Readonly<Record<string, string | undefined>>
@@ -188,6 +192,56 @@ export const loadConfig = (env: RawEnv): AppConfig => {
     )
   }
 
+  const integrationMode = readEnum(
+    env,
+    'COMMERCE_INTEGRATION_MODE',
+    ['http', 'local'] as const,
+    nodeEnv === 'production' ? 'http' : 'local',
+  )
+  const inventoryInternalUrl = readString(env, 'INVENTORY_INTERNAL_URL', '')
+  const notificationsInternalUrl = readString(env, 'NOTIFICATIONS_INTERNAL_URL', '')
+  const accountUrl = readString(env, 'ACCOUNT_URL', '')
+  if (nodeEnv === 'production' && integrationMode !== 'http')
+    throw new ConfigurationError(
+      'Produccion exige COMMERCE_INTEGRATION_MODE=http; los adaptadores locales son solo para desarrollo.',
+    )
+  if (integrationMode === 'http') {
+    if (persistenceDriver !== PersistenceDriver.Postgres)
+      throw new ConfigurationError(
+        'La integracion HTTP exige PERSISTENCE_DRIVER=postgres para recuperar compras interrumpidas.',
+      )
+    for (const [key, value] of Object.entries({
+      CATALOG_INTERNAL_URL: catalogInternalUrl,
+      INVENTORY_INTERNAL_URL: inventoryInternalUrl,
+      NOTIFICATIONS_INTERNAL_URL: notificationsInternalUrl,
+      ACCOUNT_URL: accountUrl,
+    })) {
+      if (value === '')
+        throw new ConfigurationError(key + ' es obligatorio con COMMERCE_INTEGRATION_MODE=http.')
+      let url: URL
+      try {
+        url = new URL(value)
+      } catch {
+        throw new ConfigurationError(key + ' debe ser una URL absoluta.')
+      }
+      if (
+        !['http:', 'https:'].includes(url.protocol) ||
+        url.username ||
+        url.password ||
+        url.search ||
+        url.hash ||
+        url.pathname !== '/'
+      )
+        throw new ConfigurationError(
+          key + ' debe ser un origen HTTP(S), sin credenciales, ruta o parametros.',
+        )
+    }
+    if (internalServiceAuthSecret === '')
+      throw new ConfigurationError(
+        'INTERNAL_SERVICE_AUTH_SECRET es obligatorio con COMMERCE_INTEGRATION_MODE=http.',
+      )
+  }
+
   const cognitoUserPoolId = readString(env, 'COGNITO_USER_POOL_ID', '')
   const cognitoClientId = readString(env, 'COGNITO_CLIENT_ID', '')
 
@@ -199,6 +253,10 @@ export const loadConfig = (env: RawEnv): AppConfig => {
 
   return {
     nodeEnv,
+    integrationMode,
+    inventoryInternalUrl: inventoryInternalUrl || null,
+    notificationsInternalUrl: notificationsInternalUrl || null,
+    accountUrl: accountUrl || null,
     serviceName: readString(env, 'SERVICE_NAME', 'nexus-battle-commerce'),
     version: readString(env, 'SERVICE_VERSION', '0.1.0'),
     logLevel: readEnum(env, 'LOG_LEVEL', ['debug', 'info', 'warn', 'error'] as const, 'info'),

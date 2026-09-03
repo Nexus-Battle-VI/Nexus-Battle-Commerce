@@ -4,7 +4,11 @@ import { ValidationPipe, type INestApplication } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
 import request from 'supertest'
 
-import { AppModule } from '../../src/infrastructure/bootstrap/app.module'
+import { AppModule, WISHLIST_DEPENDENCIES } from '../../src/infrastructure/bootstrap/app.module'
+import { InMemoryOrderRepository } from '../../src/adapters/outbound/persistence/InMemoryOrderRepository'
+import { InMemoryWishlistRepository } from '../../src/adapters/outbound/persistence/InMemoryWishlistRepository'
+import { CustomerId } from '../../src/domain/value-objects/commerce-values'
+import type { WishlistDependencies } from '../../src/application/use-cases/WishlistUseCases'
 
 /**
  * Pruebas de integracion sobre la aplicacion NestJS real, igual que
@@ -94,7 +98,7 @@ describe('API de la lista de deseos', () => {
     })
   })
 
-  it('marca adquirido tras confirmar un pedido con esa referencia', async () => {
+  it('marca adquirido tras completar el pago simulado de esa referencia', async () => {
     // Tiene que existir en el catalogo de precios: sin precio, AddOrderLine
     // rechaza la linea y el pedido nunca llega a confirmarse.
     const sku = 'arco-corto'
@@ -105,7 +109,13 @@ describe('API de la lista de deseos', () => {
     await request(app.getHttpServer())
       .post(`/api/orders/${orderId}/lines`)
       .send({ sku, quantity: 1 })
-    await request(app.getHttpServer()).post(`/api/orders/${orderId}/confirmation`)
+    const payment = await request(app.getHttpServer()).post(`/api/orders/${orderId}/payment`).send({
+      holder: 'Persona de prueba',
+      number: '1234',
+      expiry: 'prueba',
+      securityCode: 'prueba',
+    })
+    expect(payment.status).toBe(200)
 
     const response = await statusOf(sku)
 
@@ -120,5 +130,38 @@ describe('API de la lista de deseos', () => {
       .send({ sku, quantity: 1 })
 
     expect((await statusOf(sku)).body.adquirido).toBe(false)
+  })
+})
+
+describe('Lista de deseos con validacion canonica de Catalog', () => {
+  let app: INestApplication
+  const wishlist = new InMemoryWishlistRepository()
+  beforeAll(async () => {
+    const deps: WishlistDependencies = {
+      wishlist,
+      orders: new InMemoryOrderRepository(),
+      pricing: { priceOf: () => Promise.resolve(null), productOf: () => Promise.resolve(null) },
+      purchases: { wasPurchased: () => Promise.resolve(false) },
+    }
+    const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
+      .overrideProvider(WISHLIST_DEPENDENCIES)
+      .useValue(deps)
+      .compile()
+    app = moduleRef.createNestApplication()
+    app.setGlobalPrefix('api')
+    app.useGlobalPipes(
+      new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }),
+    )
+    await app.init()
+  })
+  afterAll(async () => {
+    await app.close()
+  })
+  it('responde 422 a un UUID ausente en Catalog y no guarda un deseo inexistente', async () => {
+    const response = await request(app.getHttpServer()).post(
+      '/api/wishlist/72a3f0e1-78ad-4d1c-a641-e328529c4b41',
+    )
+    expect(response.status).toBe(422)
+    expect(await wishlist.findByCustomer(CustomerId.create('anonymous'))).toBeNull()
   })
 })

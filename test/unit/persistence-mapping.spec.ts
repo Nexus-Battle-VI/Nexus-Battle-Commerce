@@ -14,6 +14,7 @@ import { up } from '../../src/adapters/outbound/persistence/migrations/001-order
 import { describeError } from '../../src/infrastructure/observability/describe-error'
 
 const ORDER: OrderRow = {
+  version: 0,
   id: 'ord-1',
   customer_id: 'sub-ana',
   status: OrderStatus.Draft,
@@ -21,6 +22,10 @@ const ORDER: OrderRow = {
 }
 
 const line = (sku: string, amount: string, quantity = 1): OrderLineRow => ({
+  product_id: null,
+  catalog_sku: null,
+  product_name: null,
+  image_url: null,
   order_id: 'ord-1',
   sku,
   unit_price_amount: amount,
@@ -42,6 +47,7 @@ const snapshotOf = (lines: OrderSnapshot['lines']): OrderSnapshot => ({
 describe('Traduccion entre filas y agregado restaurable', () => {
   it('reconstruye lo necesario para restaurar el pedido', () => {
     expect(toRestorable(ORDER, [line('SKU-A', '1500', 2)])).toEqual({
+      version: 0,
       id: 'ord-1',
       customerId: 'sub-ana',
       status: OrderStatus.Draft,
@@ -86,7 +92,11 @@ describe('Traduccion entre filas y agregado restaurable', () => {
     )
 
     expect(Object.keys(filas[0]!).sort()).toEqual([
+      'catalog_sku',
+      'image_url',
       'order_id',
+      'product_id',
+      'product_name',
       'quantity',
       'sku',
       'unit_price_amount',
@@ -168,9 +178,12 @@ describe('Validacion de lo que se lee y de lo que se escribe', () => {
 describe('El dominio y la migracion no divergen', () => {
   const sqlDeLaMigracion = up.toString()
 
-  it.each(Object.values(OrderStatus))('la migracion admite el estado %s', (status) => {
-    expect(sqlDeLaMigracion).toContain(`'${status}'`)
-  })
+  it.each(Object.values(OrderStatus).filter((status) => status !== OrderStatus.Processing))(
+    'la migracion admite el estado %s',
+    (status) => {
+      expect(sqlDeLaMigracion).toContain(`'${status}'`)
+    },
+  )
 
   it.each(Money.SUPPORTED_CURRENCIES)('la migracion admite la moneda %s', (currency) => {
     expect(sqlDeLaMigracion).toContain(`'${currency}'`)

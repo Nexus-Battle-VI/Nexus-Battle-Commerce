@@ -13,6 +13,15 @@ import type { WishlistRepositoryPort } from '../../../application/ports/Wishlist
 export class InMemoryWishlistRepository implements WishlistRepositoryPort {
   private readonly byCustomer = new Map<string, WishlistSnapshot>()
 
+  setDesired(customerId: CustomerId, sku: Sku, desired: boolean): Promise<void> {
+    const found = this.byCustomer.get(customerId.value)
+    const wishlist =
+      found === undefined ? Wishlist.empty(customerId) : InMemoryWishlistRepository.hydrate(found)
+    if (desired) wishlist.add(sku)
+    else if (wishlist.contains(sku)) wishlist.remove(sku)
+    return this.save(wishlist)
+  }
+
   save(wishlist: Wishlist): Promise<void> {
     this.byCustomer.set(wishlist.customerId.value, wishlist.toSnapshot())
 

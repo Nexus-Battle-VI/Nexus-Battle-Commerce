@@ -1,5 +1,7 @@
 import type { Kysely, Transaction } from 'kysely'
 
+import { DomainError } from '../../../domain/errors/DomainError'
+import { CheckoutConflictError } from '../../../application/ports/CommerceIntegrationPorts'
 import { Order } from '../../../domain/entities/Order'
 import {
   CustomerId,
@@ -48,21 +50,38 @@ export class PostgresOrderRepository implements OrderRepositoryPort {
     const lines = toLineRows(snapshot)
 
     await this.db.transaction().execute(async (trx) => {
-      await trx
-        .insertInto('orders')
-        .values(row)
-        .onConflict((oc) =>
-          oc.column('id').doUpdateSet({
-            customer_id: row.customer_id,
+      const current = await trx
+        .selectFrom('orders')
+        .select(['version'])
+        .where('id', '=', snapshot.id)
+        .forUpdate()
+        .executeTakeFirst()
+      if (current === undefined) {
+        if (order.persistenceVersion !== 0) throw new DomainError('El pedido ya no existe.')
+        await trx
+          .insertInto('orders')
+          .values({ ...row, version: 1 })
+          .execute()
+      } else {
+        if (current.version !== order.persistenceVersion)
+          throw new CheckoutConflictError(
+            'El carrito cambio en otra solicitud; vuelve a consultarlo.',
+          )
+        await trx
+          .updateTable('orders')
+          .set({
             status: row.status,
             currency: row.currency,
+            version: current.version + 1,
             updated_at: new Date(),
-          }),
-        )
-        .execute()
+          })
+          .where('id', '=', snapshot.id)
+          .execute()
+      }
 
       await PostgresOrderRepository.replaceLines(trx, snapshot.id, lines)
     })
+    order.markPersisted()
   }
 
   private static async replaceLines(
@@ -80,28 +99,41 @@ export class PostgresOrderRepository implements OrderRepositoryPort {
 
     await trx
       .insertInto('order_lines')
-      .values([...lines])
+      .values(
+        lines.map((line) => ({
+          ...line,
+          product_id: line.product_id ?? null,
+          catalog_sku: line.catalog_sku ?? null,
+          product_name: line.product_name ?? null,
+          image_url: line.image_url ?? null,
+        })),
+      )
       .execute()
   }
 
   async findById(id: OrderId): Promise<Order | null> {
-    const row = await this.db
-      .selectFrom('orders')
-      .selectAll()
-      .where('id', '=', id.value)
-      .executeTakeFirst()
+    return this.db
+      .transaction()
+      .setIsolationLevel('repeatable read')
+      .execute(async (trx) => {
+        const row = await trx
+          .selectFrom('orders')
+          .selectAll()
+          .where('id', '=', id.value)
+          .executeTakeFirst()
 
-    if (row === undefined) {
-      return null
-    }
+        if (row === undefined) {
+          return null
+        }
 
-    const lines = await this.db
-      .selectFrom('order_lines')
-      .selectAll()
-      .where('order_id', '=', id.value)
-      .execute()
+        const lines = await trx
+          .selectFrom('order_lines')
+          .selectAll()
+          .where('order_id', '=', id.value)
+          .execute()
 
-    return PostgresOrderRepository.hydrate(row, lines)
+        return PostgresOrderRepository.hydrate(row, lines)
+      })
   }
 
   /**
@@ -118,40 +150,45 @@ export class PostgresOrderRepository implements OrderRepositoryPort {
    * adaptador.
    */
   async findByCustomer(customerId: CustomerId): Promise<readonly Order[]> {
-    const rows = await this.db
-      .selectFrom('orders')
-      .selectAll()
-      .where('customer_id', '=', customerId.value)
-      .orderBy('id')
-      .execute()
+    return this.db
+      .transaction()
+      .setIsolationLevel('repeatable read')
+      .execute(async (trx) => {
+        const rows = await trx
+          .selectFrom('orders')
+          .selectAll()
+          .where('customer_id', '=', customerId.value)
+          .orderBy('id')
+          .execute()
 
-    if (rows.length === 0) {
-      return []
-    }
+        if (rows.length === 0) {
+          return []
+        }
 
-    const lines = await this.db
-      .selectFrom('order_lines')
-      .selectAll()
-      .where(
-        'order_id',
-        'in',
-        rows.map((row) => row.id),
-      )
-      .execute()
+        const lines = await trx
+          .selectFrom('order_lines')
+          .selectAll()
+          .where(
+            'order_id',
+            'in',
+            rows.map((row) => row.id),
+          )
+          .execute()
 
-    const byOrder = new Map<string, OrderLineRow[]>()
+        const byOrder = new Map<string, OrderLineRow[]>()
 
-    for (const line of lines) {
-      const bucket = byOrder.get(line.order_id)
+        for (const line of lines) {
+          const bucket = byOrder.get(line.order_id)
 
-      if (bucket === undefined) {
-        byOrder.set(line.order_id, [line])
-      } else {
-        bucket.push(line)
-      }
-    }
+          if (bucket === undefined) {
+            byOrder.set(line.order_id, [line])
+          } else {
+            bucket.push(line)
+          }
+        }
 
-    return rows.map((row) => PostgresOrderRepository.hydrate(row, byOrder.get(row.id) ?? []))
+        return rows.map((row) => PostgresOrderRepository.hydrate(row, byOrder.get(row.id) ?? []))
+      })
   }
 
   private static hydrate(row: OrderRow, lines: readonly OrderLineRow[]): Order {
@@ -162,7 +199,9 @@ export class PostgresOrderRepository implements OrderRepositoryPort {
       customerId: CustomerId.create(restorable.customerId),
       currency: restorable.currency,
       status: restorable.status,
+      version: restorable.version ?? 0,
       lines: restorable.lines.map((line) => ({
+        ...line,
         sku: Sku.create(line.sku),
         // La moneda de la linea es la del pedido, siempre: no hay columna que
         // permita otra cosa, que es justo lo que se buscaba al no repetirla.
