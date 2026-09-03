@@ -77,8 +77,13 @@ export class Sku {
   static create(raw: string): Sku {
     const normalized = raw.trim().toLowerCase()
 
-    if (!Sku.PATTERN.test(normalized)) {
-      throw new DomainError(`La referencia "${raw}" no es valida. Se espera kebab-case.`)
+    if (
+      !Sku.PATTERN.test(normalized) &&
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(normalized)
+    ) {
+      throw new DomainError(
+        `La referencia "${raw}" no es valida. Se espera un UUID o SKU en kebab-case.`,
+      )
     }
 
     return new Sku(normalized)

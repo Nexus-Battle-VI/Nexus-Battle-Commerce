@@ -120,22 +120,34 @@ jobs:
             exit 1
           fi
 
-      - name: Verificar arranque del contenedor
+      - name: Verificar liveness y readiness ante dependencias ausentes
+        # La imagen exige configuracion real de integracion. Con dependencias
+        # deliberadamente ausentes debe vivir, pero NO declarar readiness.
         run: |
-          docker run -d --name commerce-ci -p 3005:3005 -e AUTH_MODE=jwt -e COGNITO_USER_POOL_ID=us-east-1_ci -e COGNITO_CLIENT_ID=cliente-ci nexus-battle-commerce:ci
+          docker run -d --name commerce-ci -p 3005:3005 \
+            -e AUTH_MODE=jwt \
+            -e COGNITO_USER_POOL_ID=us-east-1_ci \
+            -e COGNITO_CLIENT_ID=cliente-ci \
+            -e PERSISTENCE_DRIVER=postgres \
+            -e DATABASE_URL=postgres://test:test@postgres-inexistente:5432/test \
+            -e COMMERCE_INTEGRATION_MODE=http \
+            -e CATALOG_INTERNAL_URL=http://catalog-inexistente:3003 \
+            -e INVENTORY_INTERNAL_URL=http://inventory-inexistente:3002 \
+            -e NOTIFICATIONS_INTERNAL_URL=http://notifications-inexistente:3003 \
+            -e ACCOUNT_URL=http://account-inexistente:3000 \
+            -e INTERNAL_SERVICE_AUTH_SECRET=secreto-ficticio-de-ci \
+            nexus-battle-commerce:ci
+          trap 'docker rm -f commerce-ci > /dev/null' EXIT
+          live=false
           for attempt in $(seq 1 20); do
-            if curl -fsS http://127.0.0.1:3005/api/health/ready > /dev/null; then
-              echo "readiness correcta en el intento ${attempt}"
-              curl -fsS http://127.0.0.1:3005/api/version
-              docker rm -f commerce-ci > /dev/null
-              exit 0
-            fi
+            if curl -fsS http://127.0.0.1:3005/api/health/live > /dev/null; then live=true; break; fi
             sleep 2
           done
-          echo "El contenedor no alcanzo el estado ready"
-          docker logs commerce-ci
-          docker rm -f commerce-ci > /dev/null
-          exit 1
+          if [ "$live" != true ]; then docker logs commerce-ci; exit 1; fi
+          status=$(curl -sS -o /tmp/commerce-ready.json -w '%{http_code}' http://127.0.0.1:3005/api/health/ready)
+          test "$status" = 503
+          cat /tmp/commerce-ready.json
+          curl -fsS http://127.0.0.1:3005/api/version
 
   publish:
     name: Publicar imagen en GHCR

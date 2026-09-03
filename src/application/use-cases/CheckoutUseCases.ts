@@ -59,6 +59,8 @@ export interface CheckoutDependencies {
 export interface CheckoutCommand {
   readonly orderId: string
   readonly card: CardDetails
+  readonly expectedVersion?: number
+  readonly accessToken?: string
 }
 
 /** Resultado de una compra rechazada por la pasarela. */
@@ -73,6 +75,7 @@ export class PaymentDeclinedError extends Error {
 }
 
 export interface CheckoutResult {
+  readonly status?: 'COMPLETED' | 'PROCESSING'
   readonly order: OrderDto
   readonly paymentReference: string
   readonly maskedCard: string

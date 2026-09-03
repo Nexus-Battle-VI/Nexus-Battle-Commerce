@@ -1,7 +1,6 @@
 import {
   AddOrderLine,
   ChangeOrderLineQuantity,
-  ConfirmOrder,
   CreateOrder,
   GetCart,
   GetOrCreateCart,
@@ -50,7 +49,6 @@ const buildHarness = () => {
     add: new AddOrderLine(deps),
     remove: new RemoveOrderLine(deps),
     changeQuantity: new ChangeOrderLineQuantity(deps),
-    confirm: new ConfirmOrder(deps),
     getCart: new GetCart(orders),
     openCart: new GetOrCreateCart(deps),
   }
@@ -216,7 +214,10 @@ describe('GetCart', () => {
     const harness = buildHarness()
     const order = await harness.create.execute({ customerId: 'acc-1', currency: 'COP' })
     await harness.add.execute({ orderId: order.id, sku: 'espada-de-hierro', quantity: 1 })
-    await harness.confirm.execute(order.id)
+    const completed = (await harness.orders.findById(OrderId.create(order.id)))!
+    completed.beginCheckout()
+    completed.completeCheckout(FIXED_NOW)
+    await harness.orders.save(completed)
 
     expect(await harness.getCart.execute('acc-1')).toBeNull()
   })
@@ -269,7 +270,10 @@ describe('GetOrCreateCart', () => {
     const harness = buildHarness()
     const cart = await harness.openCart.execute('acc-1', 'COP')
     await harness.add.execute({ orderId: cart.id, sku: 'espada-de-hierro', quantity: 1 })
-    await harness.confirm.execute(cart.id)
+    const completed = (await harness.orders.findById(OrderId.create(cart.id)))!
+    completed.beginCheckout()
+    completed.completeCheckout(FIXED_NOW)
+    await harness.orders.save(completed)
 
     const next = await harness.openCart.execute('acc-1', 'COP')
 

@@ -9,11 +9,21 @@ import { OrderId } from '../../domain/value-objects/commerce-values'
 import { toOrderDto, type OrderDto } from '../dto/OrderDto'
 import type { SavedCartDto } from '../dto/SavedCartDto'
 import { toSavedCartDto } from '../dto/SavedCartDto'
+import type { ProductPrice, ProductPricingPort } from '../ports/ProductPricingPort'
+import { CheckoutConflictError } from '../ports/CommerceIntegrationPorts'
+import {
+  checkCartQuote,
+  currentCart,
+  isUniqueConflict,
+  productPresentation,
+  requirePrice,
+} from './OrderUseCases'
 
 export interface SavedCartDependencies {
   readonly savedCarts: SavedCartRepositoryPort
   readonly orders: OrderRepositoryPort
   readonly ids: IdGeneratorPort
+  readonly pricing?: ProductPricingPort
 }
 
 /** Borrador vigente del cliente, o `null` si no tiene ninguno abierto. */
@@ -23,7 +33,7 @@ const draftOf = async (
 ): Promise<Order | null> => {
   const found = await orders.findByCustomer(customerId)
 
-  return found.find((order) => order.isEditable) ?? null
+  return currentCart(found) ?? null
 }
 
 /**
@@ -47,6 +57,10 @@ export class SaveCart {
     if (draft === null) {
       throw new DomainError('No hay un carrito abierto que guardar.')
     }
+    if (!draft.isEditable)
+      throw new CheckoutConflictError(
+        'La compra esta en proceso; espera a que termine antes de guardar el carrito.',
+      )
 
     const saved = SavedCart.fromOrder(draft.toSnapshot())
 
@@ -90,8 +104,8 @@ export class GetSavedCart {
  * regla de precedencia entre dos cantidades de la misma referencia que la
  * historia no define, y que el cliente no podria predecir.
  *
- * Los precios que se restauran son los guardados, no los vigentes: es lo que
- * el cliente vio cuando decidio conservar el carrito.
+ * Antes de tocar el borrador se valida el lote completo contra Catalog. Un
+ * precio distinto requiere una nueva aceptacion; nunca se sustituye en silencio.
  */
 export class RestoreSavedCart {
   private readonly deps: SavedCartDependencies
@@ -109,30 +123,62 @@ export class RestoreSavedCart {
     }
 
     const existing = await draftOf(this.deps.orders, customerId)
-    const target =
-      existing ??
-      Order.draft({
-        id: OrderId.create(this.deps.ids.generate()),
-        customerId,
-        currency: saved.currency,
-      })
-
-    // Se vacia antes de volcar: restaurar deja el carrito como se guardo, no
-    // como se guardo mas lo que hubiera suelto en esta sesion.
-    for (const line of target.toSnapshot().lines) {
-      target.removeLine(Sku.create(line.sku))
-    }
-
-    for (const item of saved.lines) {
-      target.addLine(
-        item.sku,
-        Money.create(item.unitPrice.amount, saved.currency),
-        Quantity.create(item.quantity.value),
+    if (existing !== null && !existing.isEditable)
+      throw new CheckoutConflictError(
+        'La compra esta en proceso; no se puede reemplazar su carrito.',
       )
+    const prepared = new Map<string, { price: ProductPrice; quantity: number }>()
+    for (const item of saved.lines) {
+      const price =
+        this.deps.pricing === undefined
+          ? {
+              ...item,
+              sku: item.catalogSku ?? item.sku.value,
+              amount: item.unitPrice.amount,
+              currency: saved.currency,
+            }
+          : await requirePrice(this.deps.pricing, item.productId ?? item.sku.value)
+      const key = price.productId ?? price.sku
+      const previous = prepared.get(key)
+      const quantity = (previous?.quantity ?? 0) + item.quantity.value
+      checkCartQuote(price, quantity, saved.currency, item.unitPrice.amount)
+      if (previous !== undefined)
+        checkCartQuote(price, quantity, saved.currency, previous.price.amount)
+      prepared.set(key, { price, quantity })
     }
-
-    await this.deps.orders.save(target)
-
+    const fill = (target: Order): Order => {
+      if (!target.isEditable)
+        throw new CheckoutConflictError(
+          'La compra esta en proceso; no se puede reemplazar su carrito.',
+        )
+      for (const line of target.toSnapshot().lines) target.removeLine(Sku.create(line.sku))
+      target.changeCurrency(saved.currency)
+      for (const [reference, item] of prepared)
+        target.addLine(
+          Sku.create(reference),
+          Money.create(item.price.amount, saved.currency),
+          Quantity.create(item.quantity),
+          productPresentation(item.price),
+        )
+      return target
+    }
+    let target = fill(
+      existing ??
+        Order.draft({
+          id: OrderId.create(this.deps.ids.generate()),
+          customerId,
+          currency: saved.currency,
+        }),
+    )
+    try {
+      await this.deps.orders.save(target)
+    } catch (error: unknown) {
+      if (existing !== null || !isUniqueConflict(error)) throw error
+      const winner = await draftOf(this.deps.orders, customerId)
+      if (winner === null) throw error
+      target = fill(winner)
+      await this.deps.orders.save(target)
+    }
     return toOrderDto(target.toSnapshot())
   }
 }

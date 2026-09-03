@@ -1,6 +1,6 @@
 import {
   AddOrderLine,
-  ConfirmOrder,
+  CancelOrder,
   GetCart,
   GetOrCreateCart,
 } from '../../src/application/use-cases/OrderUseCases'
@@ -49,7 +49,7 @@ const buildHarness = () => {
     savedCarts,
     openCart: new GetOrCreateCart(orderDeps),
     add: new AddOrderLine(orderDeps),
-    confirm: new ConfirmOrder(orderDeps),
+    cancel: new CancelOrder(orderDeps),
     getCart: new GetCart(orders),
     save: new SaveCart(savedDeps),
     read: new GetSavedCart(savedCarts),
@@ -175,14 +175,14 @@ describe('GetSavedCart', () => {
 })
 
 describe('RestoreSavedCart', () => {
-  /** CP-61-01: guardar, terminar la sesion, volver y recuperar. */
+  /** Recuperacion sobre un borrador nuevo; la identidad entre sesiones se verifica en HTTP. */
   it('recupera los productos guardados en un carrito nuevo', async () => {
     const harness = buildHarness()
     const original = await cartWithTwoLines(harness, 'acc-1')
     await harness.save.execute('acc-1')
 
-    // La sesion termina: el pedido se confirma, asi que ya no es el carrito.
-    await harness.confirm.execute(original)
+    // Se cancela el borrador vigente; la copia guardada sigue disponible.
+    await harness.cancel.execute(original, 'Cerrar borrador para recuperar guardado')
     expect(await harness.getCart.execute('acc-1')).toBeNull()
 
     const recovered = await harness.restore.execute('acc-1')
@@ -211,7 +211,7 @@ describe('RestoreSavedCart', () => {
     expect(recovered.itemCount).toBe(3)
   })
 
-  it('conserva el precio guardado, no el vigente', async () => {
+  it('conserva el precio guardado con el adaptador local', async () => {
     const harness = buildHarness()
     await cartWithTwoLines(harness, 'acc-1')
     await harness.save.execute('acc-1')
