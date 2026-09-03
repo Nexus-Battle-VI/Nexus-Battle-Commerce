@@ -9,9 +9,9 @@ name: Flujo de ramas
 # trabajo, porque aplica el estado de una rama sobre el de la otra.
 #
 # CONTAR COMMITS NO RESPONDE A ESA PREGUNTA. `main` solo admite *squash*, asi
-# que los commits de `develop` siempre apareceran «de mas» aunque su contenido
-# ya este integrado. Por eso la comprobacion mira de donde VIENEN los commits,
-# no cuantos son.
+# que dos cambios con el mismo contenido tienen SHA y ancestry distintos. La
+# comprobacion exige que el arbol propuesto sea exactamente el de `develop`:
+# ni mas, ni menos, independientemente de como se construyo el historial.
 #
 # Esto convierte la norma en un limite: la comprobacion falla. Esa es la
 # diferencia entre una convencion escrita en un fichero de reglas y algo que
@@ -48,15 +48,13 @@ jobs:
             exit 1
           fi
 
-          sin_pasar="$(git rev-list --no-merges origin/develop..HEAD)"
-
-          if [ -n "$sin_pasar" ]; then
-            echo "::error::Este pull request llevaria a main commits que develop no tiene. Integralos primero en develop y promociona desde ahi."
+          if ! git diff --quiet origin/develop HEAD; then
+            echo "::error::El arbol propuesto para main no coincide exactamente con develop. Integra primero cualquier diferencia en develop y promociona ese arbol completo."
             {
-              echo "## Commits que no han pasado por develop"
+              echo "## Diferencias frente a develop"
               echo
               echo '```'
-              git log --no-merges --oneline origin/develop..HEAD
+              git diff --name-status origin/develop HEAD
               echo '```'
               echo
               echo "Que hacer: abre el pull request contra \`develop\`. Cuando este integrado alli, promociona \`develop\` a \`main\`."
@@ -64,7 +62,7 @@ jobs:
             exit 1
           fi
 
-          echo "Todos los commits de este pull request estan ya en develop."
+          echo "El arbol propuesto coincide exactamente con develop."
 
       - name: Avisar si esta promocion borraria algo que solo esta en main
         # Se ejecuta aunque el paso anterior falle: si las dos cosas van mal,
