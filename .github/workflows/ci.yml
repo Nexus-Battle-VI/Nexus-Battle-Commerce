@@ -121,8 +121,12 @@ jobs:
           fi
 
       - name: Verificar arranque del contenedor
+        # La imagen corre con NODE_ENV=production, y ahi `loadConfig` EXIGE la
+        # autenticacion y el contrato interno con Catalog. Los valores de aqui
+        # son ficticios y solo sirven para que el proceso arranque: la prueba
+        # comprueba que responde `ready`, no que hable con nadie.
         run: |
-          docker run -d --name commerce-ci -p 3005:3005 -e AUTH_MODE=jwt -e COGNITO_USER_POOL_ID=us-east-1_ci -e COGNITO_CLIENT_ID=cliente-ci nexus-battle-commerce:ci
+          docker run -d --name commerce-ci -p 3005:3005             -e AUTH_MODE=jwt             -e COGNITO_USER_POOL_ID=us-east-1_ci             -e COGNITO_CLIENT_ID=cliente-ci             -e CATALOG_INTERNAL_URL=http://catalog-inexistente:3003             -e INTERNAL_SERVICE_AUTH_SECRET=secreto-ficticio-de-ci             nexus-battle-commerce:ci
           for attempt in $(seq 1 20); do
             if curl -fsS http://127.0.0.1:3005/api/health/ready > /dev/null; then
               echo "readiness correcta en el intento ${attempt}"
