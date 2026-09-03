@@ -1,5 +1,15 @@
 import { ApiProperty } from '@nestjs/swagger'
-import { IsIn, IsInt, IsString, Length, Matches, Max, Min } from 'class-validator'
+import {
+  IsIn,
+  IsInt,
+  IsString,
+  IsOptional,
+  IsUUID,
+  Length,
+  Matches,
+  Max,
+  Min,
+} from 'class-validator'
 
 const KEBAB = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/
 
@@ -30,7 +40,13 @@ export class AddLineRequest {
   @ApiProperty({ example: 'espada-de-hierro' })
   @IsString()
   @Matches(KEBAB, { message: 'La referencia debe estar en kebab-case.' })
-  sku!: string
+  @IsOptional()
+  sku?: string
+
+  @ApiProperty({ required: false, format: 'uuid' })
+  @IsOptional()
+  @IsUUID()
+  productId?: string
 
   @ApiProperty({ example: 2, minimum: 1, maximum: 999 })
   @IsInt()
@@ -68,6 +84,15 @@ export class CancelOrderRequest {
 }
 
 export class OrderLineResponse {
+  @ApiProperty({ required: false, format: 'uuid' })
+  readonly productId?: string
+
+  @ApiProperty({ required: false })
+  readonly name?: string
+
+  @ApiProperty({ required: false })
+  readonly imageUrl?: string
+
   @ApiProperty({ example: 'espada-de-hierro' })
   readonly sku!: string
 
@@ -82,13 +107,16 @@ export class OrderLineResponse {
 }
 
 export class OrderResponse {
+  @ApiProperty({ example: 1 })
+  readonly version?: number
+
   @ApiProperty({ example: 'ord-0b1d5b0e' })
   readonly id!: string
 
   @ApiProperty({ example: 'acc-0b1d5b0e' })
   readonly customerId!: string
 
-  @ApiProperty({ example: 'DRAFT', enum: ['DRAFT', 'CONFIRMED', 'CANCELLED'] })
+  @ApiProperty({ example: 'DRAFT', enum: ['DRAFT', 'PROCESSING', 'CONFIRMED', 'CANCELLED'] })
   readonly status!: string
 
   @ApiProperty({ example: 'COP' })

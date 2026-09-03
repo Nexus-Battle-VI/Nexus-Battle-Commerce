@@ -9,9 +9,9 @@ Este repositorio contiene código y Pull Requests. No contiene Issues ni Product
 - **Base de datos objetivo:** PostgreSQL (ver limitaciones más abajo)
 - **Documentación técnica del sistema:** [Nexus-Battle-Infrastructure](https://github.com/Nexus-Battle-VI/Nexus-Battle-Infrastructure)
 
-## Este servicio no procesa pagos
+## Pago académico simulado
 
-El alcance actual llega hasta la **confirmación del pedido**. No hay pasarela de pago, no se almacenan datos de tarjeta y no se mueve dinero. Integrar un pago requiere una decisión arquitectónica y una revisión de cumplimiento independientes; no debe añadirse de forma incremental.
+HU-59 recibe los cuatro campos del formulario y ejecuta una pasarela simulada: no mueve dinero. La integración HTTP reserva el lote en Catalog y entrega objetos reales en Player/Inventory. Conserva referencia y máscara, nunca los datos completos de tarjeta. El estado y la recuperación se describen en [arquitectura](docs/architecture.md).
 
 ## Las tres decisiones que gobiernan el dominio
 
@@ -163,7 +163,7 @@ Documentación interactiva de la API en `http://localhost:3005/api/docs`.
 | `GET`    | `/api/orders/:orderId`              | Recupera un pedido                                             |
 | `POST`   | `/api/orders/:orderId/lines`        | Añade unidades de un producto                                  |
 | `DELETE` | `/api/orders/:orderId/lines/:sku`   | Retira una referencia                                          |
-| `POST`   | `/api/orders/:orderId/confirmation` | Confirma el pedido                                             |
+| `POST`   | `/api/orders/:orderId/confirmation` | Rechaza 409: la compra debe pasar por payment                  |
 | `POST`   | `/api/orders/:orderId/cancellation` | Cancela el pedido                                              |
 | `GET`    | `/api/health/live`                  | El proceso responde. No consulta dependencias                  |
 | `GET`    | `/api/health/ready`                 | Evalúa las dependencias reales. Responde `503` si alguna falla |
@@ -205,13 +205,14 @@ docker run --rm -p 3005:3005 nexus-battle-commerce:local
 
 La imagen es multi-etapa, se ejecuta con el usuario sin privilegios `node`, incluye solo dependencias de producción y no contiene secretos.
 
-## Limitaciones conocidas del alcance actual
+## Integración y límites del alcance actual
 
-- **No hay pago.** Ver la sección correspondiente arriba.
+- El pago es simulado y no existe cobro financiero.
 - **La persistencia por defecto es en memoria y se pierde al reiniciar.** Con `PERSISTENCE_DRIVER=postgres` opera el adaptador real sobre PostgreSQL con Kysely, probado contra un motor en contenedor. El repositorio en memoria no es un resto del andamiaje: es lo que permite probar el dominio y los casos de uso **sin Docker**.
-- **Los precios provienen de un catálogo local**, no de una llamada HTTP a Catalog. `LocalCatalogPricing` es una implementación completa del puerto, no una simulación del servicio; el adaptador HTTP depende de que ADR-006 defina la integración. Lo que este servicio **nunca** hace es leer la base de datos de Catalog.
-- **No hay control de acceso.** El `customerId` llega en la petición sin verificar: cualquiera podría crear o confirmar pedidos a nombre de otra persona. Resolverlo depende del proveedor de identidad pendiente de aprobación.
-- **No hay reserva de inventario ni saga de checkout completa.** Confirmar un pedido no descuenta stock ni coordina con Player/Inventory. Esa coordinación es un proceso de larga duración entre servicios y depende de ADR-006.
+- Producción exige `COMMERCE_INTEGRATION_MODE=http`, PostgreSQL y JWT. Usa el contrato canónico de Catalog, reserva por lote, entrega idempotente de Inventory y correo durable con Notifications. El modo local es exclusivo de desarrollo.
+- Configurar las cuatro URLs internas y la clave HMAC de `.env.example`; ejecutar la migración 004 antes del binario. El checkout usa `POST /api/orders/:id/payment`; `GET` en esa ruta consulta su estado sin repetir el pago.
+- Solo se paga un pedido del titular del JWT. El país/región y las promociones requieren completar los acuerdos de precio con Account/Catalog; no hay conversión ni descuentos inventados.
+- La migración 004 no permite rollback destructivo de ledgers. Revisar [recuperación y despliegue](docs/architecture.md) antes de publicar.
 
 ## Contribución
 

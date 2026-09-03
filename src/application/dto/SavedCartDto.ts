@@ -1,6 +1,9 @@
 import type { SavedCartSnapshot } from '../../domain/entities/SavedCart'
 
 export interface SavedCartItemDto {
+  readonly productId?: string
+  readonly name?: string
+  readonly imageUrl?: string
   readonly sku: string
   readonly unitPrice: number
   readonly quantity: number
@@ -23,7 +26,10 @@ export const toSavedCartDto = (snapshot: SavedCartSnapshot): SavedCartDto => ({
   total: snapshot.items.reduce((sum, item) => sum + item.unitPriceAmount * item.quantity, 0),
   itemCount: snapshot.items.reduce((sum, item) => sum + item.quantity, 0),
   items: snapshot.items.map((item) => ({
-    sku: item.sku,
+    sku: item.catalogSku ?? item.sku,
+    ...(item.productId === undefined ? {} : { productId: item.productId }),
+    ...(item.name === undefined ? {} : { name: item.name }),
+    ...(item.imageUrl === undefined ? {} : { imageUrl: item.imageUrl }),
     unitPrice: item.unitPriceAmount,
     quantity: item.quantity,
     subtotal: item.unitPriceAmount * item.quantity,

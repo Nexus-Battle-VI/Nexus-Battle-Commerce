@@ -5,7 +5,7 @@ export interface HealthReport {
 
 export interface ReadinessCheck {
   readonly name: string
-  check: () => boolean
+  check: () => boolean | Promise<boolean>
 }
 
 export interface VersionReport {
@@ -24,7 +24,7 @@ export const buildLiveness = (): HealthReport => ({ status: 'ok', checks: {} })
  * Readiness: evalua las dependencias reales. Nunca devuelve `ok` de forma
  * incondicional; una readiness falsa es peor que no tenerla.
  */
-export const buildReadiness = (checks: readonly ReadinessCheck[]): HealthReport => {
+export const buildReadiness = async (checks: readonly ReadinessCheck[]): Promise<HealthReport> => {
   const results: Record<string, 'ok' | 'error'> = {}
   let healthy = true
 
@@ -32,7 +32,7 @@ export const buildReadiness = (checks: readonly ReadinessCheck[]): HealthReport 
     let outcome: 'ok' | 'error'
 
     try {
-      outcome = item.check() ? 'ok' : 'error'
+      outcome = (await item.check()) ? 'ok' : 'error'
     } catch {
       outcome = 'error'
     }

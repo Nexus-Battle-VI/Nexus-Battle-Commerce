@@ -1,3 +1,25 @@
+import {
+  PURCHASE_STORE,
+  PURCHASE_RECOVERY,
+  type PurchaseStorePort,
+} from '../../application/ports/CommerceIntegrationPorts'
+import { IntegratedCheckout } from '../../application/use-cases/IntegratedCheckout'
+import { PostgresPurchaseStore } from '../../adapters/outbound/persistence/PostgresPurchaseStore'
+import { InMemoryPurchaseStore } from '../../adapters/outbound/persistence/InMemoryPurchaseStore'
+import { HttpPurchaseRecipient } from '../../adapters/outbound/identity/HttpPurchaseRecipient'
+import { HttpCatalogPricing } from '../../adapters/outbound/pricing/HttpCatalogPricing'
+import {
+  InternalJsonClient,
+  HttpCatalogReservations,
+  HttpInventoryGrant,
+  HttpPurchaseMail,
+} from '../../adapters/outbound/inventory/CommerceInternalClients'
+import { PurchaseRecoveryWorker } from './PurchaseRecoveryWorker'
+const INTEGRATED_CHECKOUT = Symbol('IntegratedCheckout')
+const configured = (value: string | null): string => {
+  if (value === null) throw new Error('Falta configuracion de integracion.')
+  return value
+}
 import { Module, type CanActivate } from '@nestjs/common'
 import { APP_GUARD, Reflector } from '@nestjs/core'
 import type { Kysely } from 'kysely'
@@ -156,6 +178,59 @@ export const DATABASE_CONNECTION = Symbol('DatabaseConnection')
   ],
   providers: [
     {
+      provide: PURCHASE_STORE,
+      useFactory: (db: Kysely<Database> | null, orders: OrderRepositoryPort): PurchaseStorePort =>
+        db === null ? new InMemoryPurchaseStore(orders) : new PostgresPurchaseStore(db),
+      inject: [DATABASE_CONNECTION, ORDER_REPOSITORY],
+    },
+    {
+      provide: INTEGRATED_CHECKOUT,
+      useFactory: (
+        config: AppConfig,
+        orders: OrderRepositoryPort,
+        pricing: ProductPricingPort,
+        payments: PaymentGatewayPort,
+        ids: IdGeneratorPort,
+        store: PurchaseStorePort,
+      ): IntegratedCheckout | null => {
+        if (config.integrationMode !== 'http') return null
+        const internal = (url: string | null): InternalJsonClient =>
+          new InternalJsonClient(
+            configured(url),
+            configured(config.internalServiceAuthSecret),
+            config.internalTimeoutMs,
+          )
+        return new IntegratedCheckout({
+          orders,
+          pricing,
+          payments,
+          ids,
+          store,
+          reservations: new HttpCatalogReservations(internal(config.catalogInternalUrl)),
+          inventory: new HttpInventoryGrant(internal(config.inventoryInternalUrl)),
+          recipient: new HttpPurchaseRecipient(
+            configured(config.accountUrl),
+            config.internalTimeoutMs,
+          ),
+          mail: new HttpPurchaseMail(internal(config.notificationsInternalUrl)),
+        })
+      },
+      inject: [
+        APP_CONFIG,
+        ORDER_REPOSITORY,
+        PRODUCT_PRICING,
+        PAYMENT_GATEWAY,
+        ID_GENERATOR,
+        PURCHASE_STORE,
+      ],
+    },
+    {
+      provide: PURCHASE_RECOVERY,
+      useFactory: (checkout: IntegratedCheckout | null, logger: Logger): PurchaseRecoveryWorker =>
+        new PurchaseRecoveryWorker(checkout, logger),
+      inject: [INTEGRATED_CHECKOUT, LOGGER],
+    },
+    {
       provide: APP_CONFIG,
       useFactory: (): AppConfig => loadConfig(process.env),
     },
@@ -212,18 +287,15 @@ export const DATABASE_CONNECTION = Symbol('DatabaseConnection')
     },
     {
       provide: PRODUCT_PRICING,
-      useFactory: (logger: Logger): ProductPricingPort => {
-        // El adaptador HTTP hacia Catalog depende de ADR-006. Hasta entonces
-        // se usa el catalogo local, que es una implementacion completa del
-        // puerto. Lo que nunca se hace es leer la base de datos de Catalog.
+      useFactory: (config: AppConfig, logger: Logger): ProductPricingPort => {
         logger.info('pricing_adapter_selected', {
-          adapter: 'local-catalog',
-          detail: 'El adaptador HTTP hacia Catalog requiere ADR-006 aprobado.',
+          adapter: config.integrationMode === 'http' ? 'catalog-http' : 'local-development',
         })
-
-        return new LocalCatalogPricing(DEMO_PRICES)
+        return config.integrationMode === 'http'
+          ? new HttpCatalogPricing(configured(config.catalogInternalUrl), config.internalTimeoutMs)
+          : new LocalCatalogPricing(DEMO_PRICES)
       },
-      inject: [LOGGER],
+      inject: [APP_CONFIG, LOGGER],
     },
     {
       provide: PAYMENT_GATEWAY,
@@ -393,11 +465,15 @@ export const DATABASE_CONNECTION = Symbol('DatabaseConnection')
       useFactory: (
         wishlist: WishlistRepositoryPort,
         orders: OrderRepositoryPort,
+        pricing: ProductPricingPort,
+        purchases: PurchaseStorePort,
+        config: AppConfig,
       ): WishlistDependencies => ({
         wishlist,
         orders,
+        ...(config.integrationMode === 'http' ? { pricing, purchases } : {}),
       }),
-      inject: [WISHLIST_REPOSITORY, ORDER_REPOSITORY],
+      inject: [WISHLIST_REPOSITORY, ORDER_REPOSITORY, PRODUCT_PRICING, PURCHASE_STORE, APP_CONFIG],
     },
     {
       provide: ADD_TO_WISHLIST,
@@ -480,8 +556,11 @@ export const DATABASE_CONNECTION = Symbol('DatabaseConnection')
     },
     {
       provide: CHECKOUT_ORDER,
-      useFactory: (deps: CheckoutDependencies): CheckoutOrder => new CheckoutOrder(deps),
-      inject: [CHECKOUT_DEPENDENCIES],
+      useFactory: (
+        deps: CheckoutDependencies,
+        integrated: IntegratedCheckout | null,
+      ): CheckoutOrder | IntegratedCheckout => integrated ?? new CheckoutOrder(deps),
+      inject: [CHECKOUT_DEPENDENCIES, INTEGRATED_CHECKOUT],
     },
     {
       provide: CHECKOUT_SUMMARY,
@@ -495,8 +574,9 @@ export const DATABASE_CONNECTION = Symbol('DatabaseConnection')
         savedCarts: SavedCartRepositoryPort,
         orders: OrderRepositoryPort,
         ids: IdGeneratorPort,
-      ): SavedCartDependencies => ({ savedCarts, orders, ids }),
-      inject: [SAVED_CART_REPOSITORY, ORDER_REPOSITORY, ID_GENERATOR],
+        pricing: ProductPricingPort,
+      ): SavedCartDependencies => ({ savedCarts, orders, ids, pricing }),
+      inject: [SAVED_CART_REPOSITORY, ORDER_REPOSITORY, ID_GENERATOR, PRODUCT_PRICING],
     },
     {
       provide: SAVE_CART,
@@ -522,27 +602,52 @@ export const DATABASE_CONNECTION = Symbol('DatabaseConnection')
     },
     {
       provide: READINESS_CHECKS,
-      useFactory: (
-        orders: OrderRepositoryPort,
-        wishlist: WishlistRepositoryPort,
-        savedCarts: SavedCartRepositoryPort,
-        pricing: ProductPricingPort,
-      ): readonly ReadinessCheck[] => [
-        // Todas las comprobaciones ejercitan las dependencias de verdad: si
-        // alguna no responde, la sonda falla. No se declara `ok` de forma
-        // incondicional.
-        { name: 'orders-repository', check: (): boolean => typeof orders.findById === 'function' },
-        {
-          name: 'wishlist-repository',
-          check: (): boolean => typeof wishlist.findByCustomer === 'function',
+      useFactory: (config: AppConfig, db: Kysely<Database> | null): readonly ReadinessCheck[] => {
+        if (config.integrationMode === 'local')
+          return [{ name: 'development-mode', check: () => true }]
+        return [
+          {
+            name: 'commerce-database',
+            check: async (): Promise<boolean> => {
+              if (db === null) return false
+              await db.selectFrom('orders').select(['version', 'status']).limit(1).execute()
+              await db.selectFrom('purchase_attempts').select('id').limit(1).execute()
+              await db.selectFrom('purchase_mail_outbox').select('id').limit(1).execute()
+              return true
+            },
+          },
+          {
+            name: 'catalog-query',
+            check: async (): Promise<boolean> =>
+              (
+                await fetch(
+                  configured(config.catalogInternalUrl) + '/api/v1/catalog/products?page=1',
+                  { signal: AbortSignal.timeout(config.internalTimeoutMs), redirect: 'error' },
+                )
+              ).ok,
+          },
+          {
+            name: 'inventory',
+            check: async (): Promise<boolean> =>
+              (
+                await fetch(configured(config.inventoryInternalUrl) + '/api/health/ready', {
+                  signal: AbortSignal.timeout(config.internalTimeoutMs),
+                  redirect: 'error',
+                })
+              ).ok,
+          },
+        ]
+      },
+      inject: [APP_CONFIG, DATABASE_CONNECTION],
+    },
+    {
+      provide: Symbol('DatabaseShutdown'),
+      useFactory: (db: Kysely<Database> | null): { onModuleDestroy: () => Promise<void> } => ({
+        onModuleDestroy: async () => {
+          if (db !== null) await db.destroy()
         },
-        {
-          name: 'saved-cart-repository',
-          check: (): boolean => typeof savedCarts.findByCustomer === 'function',
-        },
-        { name: 'catalog-pricing', check: (): boolean => typeof pricing.priceOf === 'function' },
-      ],
-      inject: [ORDER_REPOSITORY, WISHLIST_REPOSITORY, SAVED_CART_REPOSITORY, PRODUCT_PRICING],
+      }),
+      inject: [DATABASE_CONNECTION],
     },
     {
       provide: VERSION_REPORT,

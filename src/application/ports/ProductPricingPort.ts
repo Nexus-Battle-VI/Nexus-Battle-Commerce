@@ -10,6 +10,10 @@
  * una implementacion completa del puerto y no una simulacion del servicio.
  */
 export interface ProductPrice {
+  readonly productId?: string
+  readonly name?: string
+  readonly imageUrl?: string
+  readonly availableUnits?: number | null
   readonly sku: string
   readonly amount: number
   readonly currency: string
@@ -18,6 +22,18 @@ export interface ProductPrice {
 export interface ProductPricingPort {
   /** Devuelve `null` cuando el producto no existe o no esta a la venta. */
   priceOf(sku: string): Promise<ProductPrice | null>
+  productOf?(reference: string): Promise<CatalogProduct | null>
+}
+
+export interface CatalogProduct {
+  readonly productId: string
+  readonly sku: string
+  readonly name: string
+  readonly imageUrl: string
+  readonly premium: boolean
+  readonly lifecycleStatus: 'ACTIVE' | 'SUSPENDED'
+  readonly availableUnits: number | null
+  readonly realMoneyPrice: { readonly amount: number; readonly currency: string } | null
 }
 
 export const PRODUCT_PRICING = Symbol('ProductPricingPort')

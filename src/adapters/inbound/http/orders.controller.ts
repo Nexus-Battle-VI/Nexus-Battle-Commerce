@@ -1,3 +1,4 @@
+import { translateIntegrationError } from './integration-errors'
 import {
   BadRequestException,
   Body,
@@ -183,7 +184,14 @@ export class OrdersController {
     try {
       await this.assertOwned(orderId, identity)
 
-      return await this.addLine.execute({ orderId, sku: body.sku, quantity: body.quantity })
+      if ((body.productId === undefined) === (body.sku === undefined)) {
+        throw new BadRequestException('Indica productId o sku, exactamente una referencia.')
+      }
+      return await this.addLine.execute({
+        orderId,
+        sku: body.productId ?? body.sku ?? '',
+        quantity: body.quantity,
+      })
     } catch (error: unknown) {
       throw OrdersController.translate(error)
     }
@@ -292,6 +300,9 @@ export class OrdersController {
    * es el contenido.
    */
   private static translate(error: unknown): Error {
+    const integrationError = translateIntegrationError(error)
+    if (integrationError !== null) return integrationError
+
     if (error instanceof OrderNotFoundError) {
       return new NotFoundException(error.message)
     }

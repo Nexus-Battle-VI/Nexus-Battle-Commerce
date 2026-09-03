@@ -1,6 +1,9 @@
 import type { OrderSnapshot } from '../../domain/entities/Order'
 
 export interface OrderLineDto {
+  readonly productId?: string
+  readonly name?: string
+  readonly imageUrl?: string
   readonly sku: string
   readonly unitPrice: number
   readonly quantity: number
@@ -8,6 +11,7 @@ export interface OrderLineDto {
 }
 
 export interface OrderDto {
+  readonly version?: number
   readonly id: string
   readonly customerId: string
   readonly status: string
@@ -20,13 +24,17 @@ export interface OrderDto {
 
 export const toOrderDto = (snapshot: OrderSnapshot): OrderDto => ({
   id: snapshot.id,
+  version: snapshot.version ?? 0,
   customerId: snapshot.customerId,
   status: snapshot.status,
   currency: snapshot.currency,
   total: snapshot.totalAmount,
   itemCount: snapshot.itemCount,
   lines: snapshot.lines.map((line) => ({
-    sku: line.sku,
+    ...(line.productId === undefined ? {} : { productId: line.productId }),
+    ...(line.name === undefined ? {} : { name: line.name }),
+    ...(line.imageUrl === undefined ? {} : { imageUrl: line.imageUrl }),
+    sku: line.catalogSku ?? line.sku,
     unitPrice: line.unitPriceAmount,
     quantity: line.quantity,
     subtotal: line.subtotalAmount,

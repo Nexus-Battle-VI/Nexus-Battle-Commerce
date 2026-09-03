@@ -1,3 +1,4 @@
+import { translateIntegrationError } from './integration-errors'
 import {
   BadRequestException,
   Controller,
@@ -131,6 +132,9 @@ export class SavedCartController {
   }
 
   private static translate(error: unknown): Error {
+    const integrationError = translateIntegrationError(error)
+    if (integrationError !== null) return integrationError
+
     if (error instanceof DomainError) {
       // Un mensaje sobre "no tiene ningun carrito guardado" es un 404, no un
       // 400: la peticion es correcta, lo que falta es el recurso.

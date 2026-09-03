@@ -1,4 +1,4 @@
-import type { Kysely } from 'kysely'
+import { sql, type Kysely } from 'kysely'
 
 import { SavedCart } from '../../../domain/entities/SavedCart'
 import type { CustomerId } from '../../../domain/value-objects/commerce-values'
@@ -28,6 +28,9 @@ export class PostgresSavedCartRepository implements SavedCartRepositoryPort {
     const snapshot = cart.toSnapshot()
 
     await this.db.transaction().execute(async (trx) => {
+      await sql`select pg_advisory_xact_lock(hashtextextended(${snapshot.customerId}, 61))`.execute(
+        trx,
+      )
       await trx
         .deleteFrom('saved_cart_items')
         .where('customer_id', '=', snapshot.customerId)
@@ -39,6 +42,10 @@ export class PostgresSavedCartRepository implements SavedCartRepositoryPort {
           snapshot.items.map((item) => ({
             customer_id: snapshot.customerId,
             sku: item.sku,
+            product_id: item.productId ?? null,
+            catalog_sku: item.catalogSku ?? null,
+            product_name: item.name ?? null,
+            image_url: item.imageUrl ?? null,
             currency: snapshot.currency,
             unit_price_amount: String(item.unitPriceAmount),
             quantity: item.quantity,
@@ -51,7 +58,7 @@ export class PostgresSavedCartRepository implements SavedCartRepositoryPort {
   async findByCustomer(customerId: CustomerId): Promise<SavedCart | null> {
     const rows = await this.db
       .selectFrom('saved_cart_items')
-      .select(['sku', 'currency', 'unit_price_amount', 'quantity'])
+      .selectAll()
       .where('customer_id', '=', customerId.value)
       .execute()
 
@@ -70,6 +77,10 @@ export class PostgresSavedCartRepository implements SavedCartRepositoryPort {
       currency: first.currency,
       items: rows.map((row) => ({
         sku: row.sku,
+        ...(row.product_id === null ? {} : { productId: row.product_id }),
+        ...(row.catalog_sku === null ? {} : { catalogSku: row.catalog_sku }),
+        ...(row.product_name === null ? {} : { name: row.product_name }),
+        ...(row.image_url === null ? {} : { imageUrl: row.image_url }),
         // `bigint` llega como cadena: se comprueba que siga siendo exacto en
         // JavaScript antes de devolverlo, igual que en las lineas del pedido.
         unitPriceAmount: toExactAmount(
@@ -82,9 +93,11 @@ export class PostgresSavedCartRepository implements SavedCartRepositoryPort {
   }
 
   async deleteByCustomer(customerId: CustomerId): Promise<void> {
-    await this.db
-      .deleteFrom('saved_cart_items')
-      .where('customer_id', '=', customerId.value)
-      .execute()
+    await this.db.transaction().execute(async (trx) => {
+      await sql`select pg_advisory_xact_lock(hashtextextended(${customerId.value}, 61))`.execute(
+        trx,
+      )
+      await trx.deleteFrom('saved_cart_items').where('customer_id', '=', customerId.value).execute()
+    })
   }
 }
