@@ -385,15 +385,17 @@ describe('loadConfig', () => {
   })
 
   it('deshabilita la documentacion interactiva en produccion por defecto', () => {
-    // Produccion exige autenticacion configurada: `loadConfig` se niega a
-    // arrancar sin ella. Se aporta aqui porque el objeto de esta prueba es la
-    // documentacion interactiva, no la autenticacion.
+    // Produccion exige autenticacion Y contrato interno con Catalog:
+    // `loadConfig` se niega a arrancar sin ellos. Se aportan aqui porque el
+    // objeto de esta prueba es la documentacion interactiva.
     expect(
       loadConfig({
         NODE_ENV: 'production',
         AUTH_MODE: 'jwt',
         COGNITO_USER_POOL_ID: 'us-east-1_abc',
         COGNITO_CLIENT_ID: 'cliente',
+        CATALOG_INTERNAL_URL: 'http://catalog:3003',
+        INTERNAL_SERVICE_AUTH_SECRET: 'secreto-ficticio-de-pruebas',
       }).swaggerEnabled,
     ).toBe(false)
   })
