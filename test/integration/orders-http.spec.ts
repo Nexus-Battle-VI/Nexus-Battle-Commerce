@@ -40,6 +40,15 @@ describe('API de comercio', () => {
   const createOrder = (currency = 'COP') =>
     request(app.getHttpServer()).post('/api/orders').send({ currency })
 
+  beforeEach(async () => {
+    const current = await request(app.getHttpServer()).get('/api/orders/cart')
+    if (current.status === 200 && current.body.id !== undefined) {
+      await request(app.getHttpServer())
+        .post(`/api/orders/${String(current.body.id)}/cancellation`)
+        .send({ reason: 'Aislar siguiente caso' })
+    }
+  })
+
   const addLine = (orderId: string, sku: string, quantity: number) =>
     request(app.getHttpServer()).post(`/api/orders/${orderId}/lines`).send({ sku, quantity })
 
@@ -127,34 +136,23 @@ describe('API de comercio', () => {
     expect(response.body.total).toBe(4_000)
   })
 
-  it('confirma el pedido y a partir de ahi queda congelado', async () => {
+  it('rechaza la confirmacion directa sin ejecutar una compra', async () => {
     const order = await createOrder()
     const id = String(order.body.id)
     await addLine(id, 'espada-de-hierro', 2)
-
     const confirm = await request(app.getHttpServer()).post(`/api/orders/${id}/confirmation`)
-    expect(confirm.status).toBe(200)
-    expect(confirm.body.status).toBe('CONFIRMED')
-    expect(confirm.body.total).toBe(30_000)
-
-    // Ninguna modificacion posterior es aceptada.
-    expect((await addLine(id, 'pocion-de-vida', 1)).status).toBe(400)
-    expect(
-      (await request(app.getHttpServer()).delete(`/api/orders/${id}/lines/espada-de-hierro`))
-        .status,
-    ).toBe(400)
-    expect((await request(app.getHttpServer()).post(`/api/orders/${id}/confirmation`)).status).toBe(
-      400,
-    )
+    expect(confirm.status).toBe(409)
+    const unchanged = await request(app.getHttpServer()).get(`/api/orders/${id}`)
+    expect(unchanged.body).toMatchObject({ status: 'DRAFT', total: 30000 })
   })
 
-  it('responde 400 al confirmar un pedido vacio y 404 si no existe', async () => {
+  it('responde 409 al confirmar un pedido vacio y 404 si no existe', async () => {
     const order = await createOrder()
 
     expect(
       (await request(app.getHttpServer()).post(`/api/orders/${String(order.body.id)}/confirmation`))
         .status,
-    ).toBe(400)
+    ).toBe(409)
     expect(
       (await request(app.getHttpServer()).post('/api/orders/inexistente/confirmation')).status,
     ).toBe(404)
@@ -173,7 +171,7 @@ describe('API de comercio', () => {
     expect(response.body.status).toBe('CANCELLED')
   })
 
-  it('responde 400 al cancelar dos veces y 404 si el pedido no existe', async () => {
+  it('responde 409 al cancelar dos veces y 404 si el pedido no existe', async () => {
     const order = await createOrder()
     const id = String(order.body.id)
     await request(app.getHttpServer())
@@ -186,7 +184,7 @@ describe('API de comercio', () => {
           .post(`/api/orders/${id}/cancellation`)
           .send({ reason: 'Otro' })
       ).status,
-    ).toBe(400)
+    ).toBe(409)
     expect(
       (
         await request(app.getHttpServer())
@@ -203,7 +201,10 @@ describe('API de comercio', () => {
   it('GET /api/orders lista los pedidos de quien realiza la peticion', async () => {
     const before = await request(app.getHttpServer()).get('/api/orders')
 
-    await createOrder()
+    const first = await createOrder()
+    await request(app.getHttpServer())
+      .post(`/api/orders/${String(first.body.id)}/cancellation`)
+      .send({ reason: 'Abrir otro pedido' })
     await createOrder()
 
     const response = await request(app.getHttpServer()).get('/api/orders')
@@ -251,17 +252,14 @@ describe('Sondas de salud', () => {
     })
   })
 
-  it('GET /api/health/ready evalua repositorio y catalogo de precios', async () => {
+  it('GET /api/health/ready identifica explicitamente el modo local', async () => {
     const response = await request(app.getHttpServer()).get('/api/health/ready')
 
     expect(response.status).toBe(200)
     expect(response.body).toEqual({
       status: 'ok',
       checks: {
-        'orders-repository': 'ok',
-        'saved-cart-repository': 'ok',
-        'wishlist-repository': 'ok',
-        'catalog-pricing': 'ok',
+        'development-mode': 'ok',
       },
     })
   })

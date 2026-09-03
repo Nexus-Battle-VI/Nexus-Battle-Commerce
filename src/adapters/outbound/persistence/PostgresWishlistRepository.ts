@@ -21,6 +21,22 @@ export class PostgresWishlistRepository implements WishlistRepositoryPort {
     this.db = db
   }
 
+  async setDesired(customerId: CustomerId, sku: Sku, desired: boolean): Promise<void> {
+    if (desired) {
+      await this.db
+        .insertInto('wishlist_items')
+        .values({ customer_id: customerId.value, sku: sku.value })
+        .onConflict((c) => c.columns(['customer_id', 'sku']).doNothing())
+        .execute()
+    } else {
+      await this.db
+        .deleteFrom('wishlist_items')
+        .where('customer_id', '=', customerId.value)
+        .where('sku', '=', sku.value)
+        .execute()
+    }
+  }
+
   async save(wishlist: Wishlist): Promise<void> {
     const snapshot = wishlist.toSnapshot()
 

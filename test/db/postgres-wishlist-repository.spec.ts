@@ -1,6 +1,6 @@
 import 'reflect-metadata'
 
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql'
+import { startTestPostgres, type TestPostgres } from './postgres-runtime'
 import type { Kysely } from 'kysely'
 
 import { describeError } from '../../src/infrastructure/observability/describe-error'
@@ -15,7 +15,7 @@ import { CustomerId, Sku } from '../../src/domain/value-objects/commerce-values'
  * `postgres-order-repository.spec.ts`.
  */
 describe('PostgresWishlistRepository', () => {
-  let container: StartedPostgreSqlContainer
+  let container: TestPostgres
   let db: Kysely<Database>
   let repository: PostgresWishlistRepository
 
@@ -30,7 +30,7 @@ describe('PostgresWishlistRepository', () => {
   }
 
   beforeAll(async () => {
-    container = await new PostgreSqlContainer('postgres:17-alpine').start()
+    container = await startTestPostgres()
     db = createDatabase({ connectionString: container.getConnectionUri() })
 
     const { error } = await migrateToLatest(db)

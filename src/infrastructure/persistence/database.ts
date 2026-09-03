@@ -10,6 +10,7 @@ import { Pool } from 'pg'
 import type { Database } from '../../adapters/outbound/persistence/schema'
 import * as migration001 from '../../adapters/outbound/persistence/migrations/001-orders'
 import * as migration002 from '../../adapters/outbound/persistence/migrations/002-wishlist'
+import * as migration004 from '../../adapters/outbound/persistence/migrations/004-integrated-purchases'
 import * as migration003 from '../../adapters/outbound/persistence/migrations/003-saved-cart'
 
 export interface DatabaseOptions {
@@ -53,6 +54,7 @@ const migrations: MigrationProvider = {
       '001-orders': migration001,
       '002-wishlist': migration002,
       '003-saved-cart': migration003,
+      '004-integrated-purchases': migration004,
     }),
 }
 

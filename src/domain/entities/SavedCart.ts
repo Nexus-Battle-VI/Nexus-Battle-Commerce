@@ -1,7 +1,8 @@
+import type { ProductPresentation } from './Order'
 import { DomainError } from '../errors/DomainError'
 import { CustomerId, Money, Quantity, Sku } from '../value-objects/commerce-values'
 
-export interface SavedCartItemSnapshot {
+export interface SavedCartItemSnapshot extends ProductPresentation {
   readonly sku: string
   readonly unitPriceAmount: number
   readonly quantity: number
@@ -13,7 +14,7 @@ export interface SavedCartSnapshot {
   readonly items: readonly SavedCartItemSnapshot[]
 }
 
-interface SavedCartItem {
+interface SavedCartItem extends ProductPresentation {
   readonly sku: Sku
   readonly unitPrice: Money
   readonly quantity: Quantity
@@ -58,11 +59,7 @@ export class SavedCart {
   static fromOrder(snapshot: {
     readonly customerId: string
     readonly currency: string
-    readonly lines: readonly {
-      readonly sku: string
-      readonly unitPriceAmount: number
-      readonly quantity: number
-    }[]
+    readonly lines: readonly SavedCartItemSnapshot[]
   }): SavedCart {
     if (snapshot.lines.length === 0) {
       throw new DomainError('No se puede guardar un carrito sin lineas.')
@@ -72,6 +69,7 @@ export class SavedCart {
       CustomerId.create(snapshot.customerId),
       Money.zero(snapshot.currency).currency,
       snapshot.lines.map((line) => ({
+        ...line,
         sku: Sku.create(line.sku),
         unitPrice: Money.create(line.unitPriceAmount, snapshot.currency),
         quantity: Quantity.create(line.quantity),
@@ -89,6 +87,7 @@ export class SavedCart {
       CustomerId.create(snapshot.customerId),
       Money.zero(snapshot.currency).currency,
       snapshot.items.map((item) => ({
+        ...item,
         sku: Sku.create(item.sku),
         unitPrice: Money.create(item.unitPriceAmount, snapshot.currency),
         quantity: Quantity.create(item.quantity),
@@ -129,6 +128,10 @@ export class SavedCart {
       customerId: this.customerId.value,
       currency: this.currencyCode,
       items: this.items.map((item) => ({
+        ...(item.productId === undefined ? {} : { productId: item.productId }),
+        ...(item.catalogSku === undefined ? {} : { catalogSku: item.catalogSku }),
+        ...(item.name === undefined ? {} : { name: item.name }),
+        ...(item.imageUrl === undefined ? {} : { imageUrl: item.imageUrl }),
         sku: item.sku.value,
         unitPriceAmount: item.unitPrice.amount,
         quantity: item.quantity.value,

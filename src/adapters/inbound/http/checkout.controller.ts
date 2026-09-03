@@ -1,3 +1,4 @@
+import { translateIntegrationError } from './integration-errors'
 import {
   BadRequestException,
   Body,
@@ -5,6 +6,7 @@ import {
   Controller,
   ForbiddenException,
   Get,
+  Headers,
   HttpCode,
   HttpException,
   HttpStatus,
@@ -24,9 +26,11 @@ import {
 } from '../../../application/ports/CatalogInventoryPort'
 import {
   PaymentDeclinedError,
-  type CheckoutOrder,
+  type CheckoutCommand,
+  type CheckoutResult,
   type GetCheckoutSummary,
 } from '../../../application/use-cases/CheckoutUseCases'
+import type { PurchaseStatus } from '../../../application/ports/CommerceIntegrationPorts'
 import type { GetOrder } from '../../../application/use-cases/OrderUseCases'
 import { CHECKOUT_ORDER, CHECKOUT_SUMMARY } from './tokens.checkout'
 import { GET_ORDER } from './tokens'
@@ -53,7 +57,11 @@ import type { VerifiedIdentity } from '../../../application/ports/TokenVerifierP
 export class CheckoutController {
   constructor(
     @Inject(CHECKOUT_SUMMARY) private readonly summary: GetCheckoutSummary,
-    @Inject(CHECKOUT_ORDER) private readonly checkout: CheckoutOrder,
+    @Inject(CHECKOUT_ORDER)
+    private readonly checkout: {
+      execute(command: CheckoutCommand): Promise<CheckoutResult>
+      status?(orderId: string): Promise<PurchaseStatus>
+    },
     @Inject(GET_ORDER) private readonly getOrder: GetOrder,
   ) {}
 
@@ -74,6 +82,23 @@ export class CheckoutController {
     }
   }
 
+  @Get('payment')
+  @ApiOperation({ summary: 'Consulta un intento de compra sin volver a pagar' })
+  @ApiResponse({ status: 200, type: PaymentResponse })
+  async paymentStatus(
+    @Param('orderId') orderId: string,
+    @CurrentIdentity() identity: VerifiedIdentity,
+  ): Promise<PaymentResponse> {
+    try {
+      await this.assertOwned(orderId, identity)
+      if (this.checkout.status === undefined)
+        throw new NotFoundException('No hay un intento de compra registrado.')
+      return { ...(await this.checkout.status(orderId)), realMoneyMoved: false }
+    } catch (error: unknown) {
+      throw CheckoutController.translate(error)
+    }
+  }
+
   @Post('payment')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Confirma el pago simulado y cierra la compra' })
@@ -84,6 +109,7 @@ export class CheckoutController {
   async pay(
     @Param('orderId') orderId: string,
     @Body() body: PaymentRequestBody,
+    @Headers('authorization') authorization: string | undefined,
     @CurrentIdentity() identity: VerifiedIdentity,
   ): Promise<PaymentResponse> {
     try {
@@ -91,6 +117,8 @@ export class CheckoutController {
 
       const result = await this.checkout.execute({
         orderId,
+        ...(body.expectedVersion === undefined ? {} : { expectedVersion: body.expectedVersion }),
+        accessToken: authorization?.replace(/^Bearer\s+/i, '') ?? '',
         card: {
           holder: body.holder,
           number: body.number,
@@ -100,6 +128,7 @@ export class CheckoutController {
       })
 
       return {
+        status: result.status ?? 'COMPLETED',
         order: result.order,
         paymentReference: result.paymentReference,
         maskedCard: result.maskedCard,
@@ -125,6 +154,9 @@ export class CheckoutController {
   }
 
   private static translate(error: unknown): Error {
+    const integrationError = translateIntegrationError(error)
+    if (integrationError !== null) return integrationError
+
     if (error instanceof OrderNotFoundError) {
       return new NotFoundException(error.message)
     }

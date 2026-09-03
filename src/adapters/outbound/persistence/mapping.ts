@@ -18,6 +18,7 @@ export class PersistenceMappingError extends Error {
 }
 
 export interface OrderRow {
+  readonly version?: number
   readonly id: string
   readonly customer_id: string
   readonly status: string
@@ -25,6 +26,10 @@ export interface OrderRow {
 }
 
 export interface OrderLineRow {
+  readonly product_id?: string | null
+  readonly catalog_sku?: string | null
+  readonly product_name?: string | null
+  readonly image_url?: string | null
   readonly order_id: string
   readonly sku: string
   readonly unit_price_amount: string
@@ -39,12 +44,17 @@ export interface OrderLineRow {
  * puede reconstruirse; el resto lo calcula el.
  */
 export interface RestorableLine {
+  readonly productId?: string
+  readonly catalogSku?: string
+  readonly name?: string
+  readonly imageUrl?: string
   readonly sku: string
   readonly unitPriceAmount: number
   readonly quantity: number
 }
 
 export interface RestorableOrder {
+  readonly version?: number
   readonly id: string
   readonly customerId: string
   readonly status: OrderStatus
@@ -68,7 +78,7 @@ const STATUSES: readonly string[] = Object.values(OrderStatus)
 export const toExactAmount = (raw: string, contexto: string): number => {
   const parsed = Number(raw)
 
-  if (!Number.isInteger(parsed) || String(parsed) !== raw.trim()) {
+  if (!Number.isSafeInteger(parsed) || String(parsed) !== raw.trim()) {
     throw new PersistenceMappingError(
       `${contexto} tiene un importe que no se puede representar con exactitud: "${raw}".`,
     )
@@ -101,6 +111,7 @@ export const toRestorable = (row: OrderRow, lines: readonly OrderLineRow[]): Res
 
   return {
     id: row.id,
+    version: row.version ?? 0,
     customerId: row.customer_id,
     status: row.status as OrderStatus,
     currency: row.currency,
@@ -109,6 +120,10 @@ export const toRestorable = (row: OrderRow, lines: readonly OrderLineRow[]): Res
     lines: [...lines]
       .sort((a, b) => a.sku.localeCompare(b.sku))
       .map((line) => ({
+        ...(line.product_id == null ? {} : { productId: line.product_id }),
+        ...(line.catalog_sku == null ? {} : { catalogSku: line.catalog_sku }),
+        ...(line.product_name == null ? {} : { name: line.product_name }),
+        ...(line.image_url == null ? {} : { imageUrl: line.image_url }),
         sku: line.sku,
         unitPriceAmount: toExactAmount(
           line.unit_price_amount,
@@ -122,6 +137,7 @@ export const toRestorable = (row: OrderRow, lines: readonly OrderLineRow[]): Res
 /** Descompone la instantanea en la fila de `orders`. */
 export const toOrderRow = (snapshot: OrderSnapshot): OrderRow => ({
   id: snapshot.id,
+  version: snapshot.version ?? 0,
   customer_id: snapshot.customerId,
   status: snapshot.status,
   currency: snapshot.currency,
@@ -144,6 +160,10 @@ export const toLineRows = (snapshot: OrderSnapshot): readonly OrderLineRow[] =>
 
     return {
       order_id: snapshot.id,
+      product_id: line.productId ?? null,
+      catalog_sku: line.catalogSku ?? null,
+      product_name: line.name ?? null,
+      image_url: line.imageUrl ?? null,
       sku: line.sku,
       unit_price_amount: String(line.unitPriceAmount),
       quantity: line.quantity,

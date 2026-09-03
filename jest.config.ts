@@ -37,6 +37,8 @@ const config: Config = {
     '!src/**/index.ts',
     '!src/main.ts',
     '!src/adapters/outbound/persistence/PostgresOrderRepository.ts',
+    '!src/adapters/outbound/persistence/PostgresPurchaseStore.ts',
+    '!src/adapters/outbound/persistence/migrations/**',
     '!src/adapters/outbound/persistence/PostgresWishlistRepository.ts',
     '!src/adapters/outbound/persistence/PostgresSavedCartRepository.ts',
     '!src/infrastructure/persistence/**',

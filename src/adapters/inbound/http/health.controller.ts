@@ -41,8 +41,8 @@ export class HealthController {
   @ApiOperation({ summary: 'Evalua las dependencias del servicio' })
   @ApiResponse({ status: 200, description: 'Todas las dependencias responden' })
   @ApiResponse({ status: 503, description: 'Alguna dependencia no responde' })
-  ready(@Res({ passthrough: true }) response: Response): HealthReport {
-    const report = buildReadiness(this.readinessChecks)
+  async ready(@Res({ passthrough: true }) response: Response): Promise<HealthReport> {
+    const report = await buildReadiness(this.readinessChecks)
     response.status(report.status === 'ok' ? HttpStatus.OK : HttpStatus.SERVICE_UNAVAILABLE)
 
     return report

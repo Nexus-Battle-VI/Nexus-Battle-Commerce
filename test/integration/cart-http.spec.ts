@@ -165,10 +165,12 @@ describe('API del carrito', () => {
     expect(later.body.itemCount).toBe(3)
   })
 
-  it('un pedido confirmado deja de ser el carrito vigente', async () => {
+  it('un pedido cancelado deja de ser el carrito vigente', async () => {
     const id = await emptyCart()
     await addLine(id, 'espada-de-hierro', 1)
-    await request(app.getHttpServer()).post(`/api/orders/${id}/confirmation`)
+    await request(app.getHttpServer())
+      .post(`/api/orders/${id}/cancellation`)
+      .send({ reason: 'Cancelar carrito' })
 
     const next = await openCart()
 

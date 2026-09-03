@@ -195,15 +195,16 @@ describe('Order', () => {
     })
   })
 
-  it('permite cancelar un pedido ya confirmado', () => {
+  it('impide cancelar un pedido entregado sin un proceso de devolucion', () => {
     const order = draft()
     order.addLine(sku('espada'), cop(15_000), qty(1))
     order.confirm(AT)
     order.pullEvents()
 
-    order.cancel('Devolucion aceptada', AT)
-
-    expect(order.currentStatus).toBe(OrderStatus.Cancelled)
+    expect(() => {
+      order.cancel('Devolucion aceptada', AT)
+    }).toThrow(DomainError)
+    expect(order.currentStatus).toBe(OrderStatus.Confirmed)
   })
 
   it('rechaza cancelar dos veces y modificar un cancelado', () => {
@@ -225,6 +226,7 @@ describe('Order', () => {
     order.addLine(sku('arco'), cop(12_000), qty(1))
 
     expect(order.toSnapshot()).toEqual({
+      version: 0,
       id: 'ord-1',
       customerId: 'acc-1',
       status: OrderStatus.Draft,
