@@ -74,6 +74,11 @@ import { PRODUCT_PRICING } from '../../application/ports/ProductPricingPort'
 import { PAYMENT_GATEWAY } from '../../application/ports/PaymentGatewayPort'
 import type { PaymentGatewayPort } from '../../application/ports/PaymentGatewayPort'
 import { PLAYER_INVENTORY } from '../../application/ports/PlayerInventoryPort'
+import {
+  CATALOG_INVENTORY,
+  type CatalogInventoryPort,
+} from '../../application/ports/CatalogInventoryPort'
+import { CatalogInventoryClient } from '../../adapters/outbound/inventory/CatalogInventoryClient'
 import { EVENT_PUBLISHER } from '../../application/ports/EventPublisherPort'
 import type { EventPublisherPort } from '../../application/ports/EventPublisherPort'
 import type { PlayerInventoryPort } from '../../application/ports/PlayerInventoryPort'
@@ -416,6 +421,34 @@ export const DATABASE_CONNECTION = Symbol('DatabaseConnection')
       inject: [WISHLIST_DEPENDENCIES],
     },
     {
+      provide: CATALOG_INVENTORY,
+      useFactory: (config: AppConfig, logger: Logger): CatalogInventoryPort | null => {
+        if (config.catalogInternalUrl === null || config.internalServiceAuthSecret === null) {
+          // `loadConfig` ya impide llegar aqui con NODE_ENV=production, asi que
+          // esto solo ocurre en desarrollo. Se dice en voz alta: una compra que
+          // no descuenta parece funcionar perfectamente.
+          logger.warn('catalog_inventory', {
+            driver: 'no-configurado',
+            detail:
+              'Sin CATALOG_INTERNAL_URL o INTERNAL_SERVICE_AUTH_SECRET la compra NO descuenta unidades del catalogo.',
+          })
+
+          return null
+        }
+
+        logger.info('catalog_inventory', { driver: 'catalog' })
+
+        return new CatalogInventoryClient({
+          baseUrl: config.catalogInternalUrl,
+          secret: config.internalServiceAuthSecret,
+          serviceName: config.internalServiceName,
+          timeoutMs: config.internalTimeoutMs,
+          logger,
+        })
+      },
+      inject: [APP_CONFIG, LOGGER],
+    },
+    {
       provide: CHECKOUT_DEPENDENCIES,
       useFactory: (
         orders: OrderRepositoryPort,
@@ -423,8 +456,27 @@ export const DATABASE_CONNECTION = Symbol('DatabaseConnection')
         inventory: PlayerInventoryPort,
         clock: ClockPort,
         events: EventPublisherPort,
-      ): CheckoutDependencies => ({ orders, payments, inventory, clock, events }),
-      inject: [ORDER_REPOSITORY, PAYMENT_GATEWAY, PLAYER_INVENTORY, CLOCK, EVENT_PUBLISHER],
+        catalogInventory: CatalogInventoryPort | null,
+      ): CheckoutDependencies => ({
+        orders,
+        payments,
+        inventory,
+        clock,
+        events,
+        // Se OMITE la clave cuando no hay adaptador, en lugar de pasarla como
+        // `undefined`: el caso de uso pregunta por su presencia, y una clave
+        // presente con valor vacio invita a confundir «no configurado» con
+        // «configurado y sin efecto».
+        ...(catalogInventory === null ? {} : { catalogInventory }),
+      }),
+      inject: [
+        ORDER_REPOSITORY,
+        PAYMENT_GATEWAY,
+        PLAYER_INVENTORY,
+        CLOCK,
+        EVENT_PUBLISHER,
+        CATALOG_INVENTORY,
+      ],
     },
     {
       provide: CHECKOUT_ORDER,

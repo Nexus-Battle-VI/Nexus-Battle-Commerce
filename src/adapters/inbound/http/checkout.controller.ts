@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Body,
+  ConflictException,
   Controller,
   ForbiddenException,
   Get,
@@ -16,6 +17,11 @@ import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagg
 
 import { DomainError } from '../../../domain/errors/DomainError'
 import { OrderNotFoundError } from '../../../application/errors/ApplicationError'
+import {
+  CatalogUnavailableError,
+  ProductNotInCatalogError,
+  ProductSoldOutError,
+} from '../../../application/ports/CatalogInventoryPort'
 import {
   PaymentDeclinedError,
   type CheckoutOrder,
@@ -128,6 +134,26 @@ export class CheckoutController {
       // que falla es el cobro. Un 400 diria que el cliente se equivoco al
       // formar la peticion, que no es el caso.
       return new HttpException(error.message, HttpStatus.PAYMENT_REQUIRED)
+    }
+
+    // HU-34. Los tres significan cosas distintas y se responden distinto: un
+    // texto unico mandaria al comprador a resolver algo que no depende de el.
+    if (error instanceof ProductSoldOutError) {
+      // 409: la peticion es correcta y lo que falla es el estado del producto.
+      // Habria funcionado un minuto antes y volvera a funcionar si el
+      // administrador amplia el tiraje.
+      return new ConflictException(error.message)
+    }
+
+    if (error instanceof ProductNotInCatalogError) {
+      return new NotFoundException(error.message)
+    }
+
+    if (error instanceof CatalogUnavailableError) {
+      // 503, NO 409. No se pudo preguntar, que no es lo mismo que no haber
+      // unidades: decirle «agotado» a alguien porque Catalog no responde es
+      // afirmar algo falso.
+      return new HttpException(error.message, HttpStatus.SERVICE_UNAVAILABLE)
     }
 
     if (error instanceof DomainError) {
