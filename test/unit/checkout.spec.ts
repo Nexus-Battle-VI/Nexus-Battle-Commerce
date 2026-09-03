@@ -18,6 +18,13 @@ import {
   LocalCatalogPricing,
 } from '../../src/adapters/outbound/pricing/LocalCatalogPricing'
 import type { PlayerInventoryPort } from '../../src/application/ports/PlayerInventoryPort'
+import {
+  ProductSoldOutError,
+  type CatalogAcquisition,
+  type CatalogAcquisitionResult,
+  type CatalogInventoryPort,
+} from '../../src/application/ports/CatalogInventoryPort'
+import { acquisitionIdOf } from '../../src/application/use-cases/CheckoutUseCases'
 import { DomainError } from '../../src/domain/errors/DomainError'
 import { OrderStatus } from '../../src/domain/entities/Order'
 
@@ -43,7 +50,35 @@ const sequence = (prefix: string): (() => string) => {
   }
 }
 
-const buildHarness = (inventory: PlayerInventoryPort = new InMemoryPlayerInventory()) => {
+/**
+ * Doble del contrato interno de Catalog (HU-34).
+ *
+ * Registra cada peticion para poder afirmar que se hizo UNA por unidad y con
+ * identificadores estables, que es lo que da la idempotencia.
+ */
+class CatalogInventoryFake implements CatalogInventoryPort {
+  readonly calls: CatalogAcquisition[] = []
+  private readonly agotados = new Set<string>()
+
+  agotar(productRef: string): void {
+    this.agotados.add(productRef)
+  }
+
+  acquire(acquisition: CatalogAcquisition): Promise<CatalogAcquisitionResult> {
+    this.calls.push(acquisition)
+
+    if (this.agotados.has(acquisition.productRef)) {
+      return Promise.reject(new ProductSoldOutError(acquisition.productRef))
+    }
+
+    return Promise.resolve({ availableUnits: 5, soldOut: false })
+  }
+}
+
+const buildHarness = (
+  inventory: PlayerInventoryPort = new InMemoryPlayerInventory(),
+  catalogInventory?: CatalogInventoryPort,
+) => {
   const orders = new InMemoryOrderRepository()
   const clock = { now: (): Date => FIXED_NOW }
   const orderDeps = {
@@ -69,6 +104,7 @@ const buildHarness = (inventory: PlayerInventoryPort = new InMemoryPlayerInvento
       inventory,
       clock,
       events,
+      ...(catalogInventory === undefined ? {} : { catalogInventory }),
     }),
   }
 }
@@ -411,5 +447,75 @@ describe('CheckoutOrder — consistencia ante fallo simulado', () => {
     expect(result.order.status).toBe(OrderStatus.Confirmed)
     expect(inventory.unitsOf('acc-1', 'espada-de-hierro')).toBe(2)
     expect(inventory.transferCount).toBe(1)
+  })
+})
+
+describe('HU-34: la compra descuenta del catalogo', () => {
+  it('pide UNA adquisicion por unidad, no una por linea', async () => {
+    const catalog = new CatalogInventoryFake()
+    const harness = buildHarness(new InMemoryPlayerInventory(), catalog)
+    const orderId = await cartReadyToPay(harness)
+
+    await harness.checkout.execute({ orderId, card: VALID_CARD })
+
+    // El carrito lleva espada x2 y pocion x1: tres unidades, tres peticiones.
+    // Contar lineas en vez de unidades venderia dos espadas descontando una.
+    expect(catalog.calls).toHaveLength(3)
+    expect(catalog.calls.filter((c) => c.productRef === 'espada-de-hierro')).toHaveLength(2)
+    expect(catalog.calls.filter((c) => c.productRef === 'pocion-de-vida')).toHaveLength(1)
+  })
+
+  it('el identificador de adquisicion es estable entre reintentos', () => {
+    // Es lo que hace idempotente el descuento. Si cambiara por intento, cada
+    // reintento seria una venta mas, y ese error NO se ve: nadie recibe un
+    // fallo y el producto se agota antes de lo que debia.
+    const primero = acquisitionIdOf('ord-1', 'espada-de-hierro', 0)
+    const repetido = acquisitionIdOf('ord-1', 'espada-de-hierro', 0)
+    const otraUnidad = acquisitionIdOf('ord-1', 'espada-de-hierro', 1)
+    const otroPedido = acquisitionIdOf('ord-2', 'espada-de-hierro', 0)
+
+    expect(primero).toBe(repetido)
+    expect(primero).not.toBe(otraUnidad)
+    expect(primero).not.toBe(otroPedido)
+    // Catalog exige un UUID, y su validador de base exige version 1-5 y
+    // variante 8-b.
+    expect(primero).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
+    )
+  })
+
+  it('un producto agotado detiene la compra y NO entrega nada', async () => {
+    const catalog = new CatalogInventoryFake()
+    catalog.agotar('pocion-de-vida')
+
+    const inventory = new InMemoryPlayerInventory()
+    const harness = buildHarness(inventory, catalog)
+    const orderId = await cartReadyToPay(harness)
+
+    await expect(harness.checkout.execute({ orderId, card: VALID_CARD })).rejects.toBeInstanceOf(
+      ProductSoldOutError,
+    )
+
+    // El control que importa: el descuento va ANTES de entregar. Si se
+    // entregara primero, el jugador tendria en su inventario algo que el
+    // catalogo dice que ya no existe.
+    const entregado = await harness.getCart.execute('acc-1')
+
+    expect(entregado?.status).toBe(OrderStatus.Draft)
+  })
+
+  /**
+   * CONTROL de las anteriores: sin adaptador configurado la compra sigue
+   * funcionando igual. Sin este caso, «descuenta del catalogo» podria estar
+   * pasando porque el paso es obligatorio siempre, y eso romperia el desarrollo
+   * local, donde no hay Catalog al que preguntar.
+   */
+  it('sin adaptador configurado la compra se completa igual', async () => {
+    const harness = buildHarness()
+    const orderId = await cartReadyToPay(harness)
+
+    const resultado = await harness.checkout.execute({ orderId, card: VALID_CARD })
+
+    expect(resultado.order.status).toBe(OrderStatus.Confirmed)
   })
 })

@@ -42,6 +42,11 @@ export interface AppConfig {
   readonly databaseUrl: string | null
   readonly authMode: AuthMode
   readonly cognito: CognitoConfig | null
+  /** Contrato interno con Catalog para descontar unidades (HU-34). */
+  readonly catalogInternalUrl: string | null
+  readonly internalServiceAuthSecret: string | null
+  readonly internalServiceName: string
+  readonly internalTimeoutMs: number
 }
 
 type RawEnv = Readonly<Record<string, string | undefined>>
@@ -164,6 +169,25 @@ export const loadConfig = (env: RawEnv): AppConfig => {
     )
   }
 
+  const catalogInternalUrl = readString(env, 'CATALOG_INTERNAL_URL', '')
+  const internalServiceAuthSecret = readString(env, 'INTERNAL_SERVICE_AUTH_SECRET', '')
+
+  // Sin el contrato interno, la compra NO descuenta del catalogo: se venderian
+  // unidades de un tiraje limitado sin que nadie lo notara, y el tiraje
+  // configurado dejaria de significar lo que dice.
+  //
+  // Es la misma forma que la guardia de arriba y por la misma razon: un aviso
+  // en el registro se pasa por alto; un arranque que falla, no. En desarrollo
+  // se permite ausente, y entonces el servicio arranca con el descuento
+  // desactivado y lo dice en el registro.
+  if (nodeEnv === 'production' && (catalogInternalUrl === '' || internalServiceAuthSecret === '')) {
+    throw new ConfigurationError(
+      'CATALOG_INTERNAL_URL e INTERNAL_SERVICE_AUTH_SECRET son obligatorios con ' +
+        'NODE_ENV=production. Sin ellos la compra no descuenta unidades del catalogo ' +
+        'y el tiraje limitado deja de aplicarse. Vease HU-34.',
+    )
+  }
+
   const cognitoUserPoolId = readString(env, 'COGNITO_USER_POOL_ID', '')
   const cognitoClientId = readString(env, 'COGNITO_CLIENT_ID', '')
 
@@ -186,6 +210,10 @@ export const loadConfig = (env: RawEnv): AppConfig => {
     persistenceDriver,
     databaseUrl: databaseUrl === '' ? null : databaseUrl,
     authMode,
+    catalogInternalUrl: catalogInternalUrl === '' ? null : catalogInternalUrl,
+    internalServiceAuthSecret: internalServiceAuthSecret === '' ? null : internalServiceAuthSecret,
+    internalServiceName: readString(env, 'INTERNAL_SERVICE_NAME', 'commerce'),
+    internalTimeoutMs: readInteger(env, 'INTERNAL_TIMEOUT_MS', 2_000, 100, 30_000),
     cognito:
       authMode === AuthMode.Jwt
         ? { userPoolId: cognitoUserPoolId, clientId: cognitoClientId }

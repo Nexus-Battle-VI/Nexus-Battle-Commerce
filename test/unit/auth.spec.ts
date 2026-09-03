@@ -315,8 +315,49 @@ describe('Configuracion de autenticacion', () => {
       AUTH_MODE: 'jwt',
       COGNITO_USER_POOL_ID: 'us-east-1_abc',
       COGNITO_CLIENT_ID: 'cliente',
+      CATALOG_INTERNAL_URL: 'http://catalog:3003',
+      INTERNAL_SERVICE_AUTH_SECRET: 'secreto-ficticio-de-pruebas',
     })
 
     expect(config.cognito).toEqual({ userPoolId: 'us-east-1_abc', clientId: 'cliente' })
+  })
+})
+
+/**
+ * HU-34: sin el contrato interno, la compra no descuenta unidades y el tiraje
+ * limitado deja de aplicarse. Es la misma forma que la guardia de AUTH_MODE y
+ * por la misma razon: un aviso en el registro se pasa por alto; un arranque que
+ * falla, no.
+ */
+describe('Contrato interno con Catalog', () => {
+  const produccion = {
+    NODE_ENV: 'production',
+    AUTH_MODE: 'jwt',
+    COGNITO_USER_POOL_ID: 'us-east-1_abc',
+    COGNITO_CLIENT_ID: 'cliente',
+  }
+
+  it('se niega a arrancar en produccion sin la URL de Catalog', () => {
+    expect(() =>
+      loadConfig({ ...produccion, INTERNAL_SERVICE_AUTH_SECRET: 'secreto-ficticio' }),
+    ).toThrow(ConfigurationError)
+  })
+
+  it('se niega a arrancar en produccion sin el secreto', () => {
+    expect(() =>
+      loadConfig({ ...produccion, CATALOG_INTERNAL_URL: 'http://catalog:3003' }),
+    ).toThrow(ConfigurationError)
+  })
+
+  /**
+   * CONTROL: fuera de produccion se permite ausente. Sin este caso, la guardia
+   * podria estar exigiendolo SIEMPRE y romperia el desarrollo local, donde no
+   * hay Catalog al que preguntar.
+   */
+  it('en desarrollo se permite ausente y queda en nulo', () => {
+    const config = loadConfig({})
+
+    expect(config.catalogInternalUrl).toBeNull()
+    expect(config.internalServiceAuthSecret).toBeNull()
   })
 })
