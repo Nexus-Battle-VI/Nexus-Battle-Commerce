@@ -13,6 +13,7 @@ import type { Generated } from 'kysely'
  * de forma explicita: no hay conversion automatica de nombres que sorprenda.
  */
 export interface OrdersTable {
+  readonly version: Generated<number>
   readonly id: string
 
   /**
@@ -49,6 +50,10 @@ export interface OrdersTable {
  * tener total.
  */
 export interface OrderLinesTable {
+  readonly product_id: string | null
+  readonly catalog_sku: string | null
+  readonly product_name: string | null
+  readonly image_url: string | null
   /** Clave foranea DENTRO del mismo servicio, que es lo que si esta permitido. */
   readonly order_id: string
 
@@ -94,6 +99,10 @@ export interface WishlistItemsTable {
  * lo que el catalogo cueste al volver. No guarda subtotal ni total: se derivan.
  */
 export interface SavedCartItemsTable {
+  readonly product_id: string | null
+  readonly catalog_sku: string | null
+  readonly product_name: string | null
+  readonly image_url: string | null
   readonly customer_id: string
   readonly sku: string
   readonly currency: string
@@ -103,7 +112,26 @@ export interface SavedCartItemsTable {
   readonly saved_at: Generated<Date>
 }
 
+export interface PurchaseAttemptsTable {
+  readonly next_attempt_at: Generated<Date>
+  readonly id: string
+  readonly order_id: string
+  readonly customer_id: string
+  readonly state: string
+  readonly payload: string
+  readonly failure: string | null
+  readonly updated_at: Generated<Date>
+}
+export interface PurchaseMailOutboxTable {
+  readonly next_attempt_at: Generated<Date>
+  readonly id: string
+  readonly payload: string
+  readonly sent_at: Date | null
+  readonly created_at: Generated<Date>
+}
 export interface Database {
+  readonly purchase_attempts: PurchaseAttemptsTable
+  readonly purchase_mail_outbox: PurchaseMailOutboxTable
   readonly orders: OrdersTable
   readonly order_lines: OrderLinesTable
   readonly wishlist_items: WishlistItemsTable

@@ -1,3 +1,4 @@
+import { DomainError } from '../../../domain/errors/DomainError'
 import type {
   PaymentGatewayPort,
   PaymentOutcome,
@@ -43,6 +44,15 @@ export class SimulatedPaymentGateway implements PaymentGatewayPort {
   private readonly approved = new Map<string, PaymentOutcome>()
 
   charge(request: PaymentRequest): Promise<PaymentOutcome> {
+    if (
+      [
+        request.card.holder,
+        request.card.number,
+        request.card.expiry,
+        request.card.securityCode,
+      ].some((value) => value.trim() === '')
+    )
+      throw new DomainError('Los cuatro datos del pago son obligatorios.')
     const already = this.approved.get(request.transactionId)
 
     if (already !== undefined) {
@@ -60,7 +70,7 @@ export class SimulatedPaymentGateway implements PaymentGatewayPort {
   }
 
   private decide(request: PaymentRequest, digits: string): PaymentOutcome {
-    const masked = digits.length >= 4 ? digits.slice(-4) : digits
+    const masked = digits.length > 4 ? digits.slice(-4) : '****'
 
     if (request.amount <= 0) {
       return {

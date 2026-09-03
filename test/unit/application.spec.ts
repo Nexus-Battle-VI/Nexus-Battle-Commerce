@@ -24,6 +24,7 @@ import {
   Quantity,
   Sku,
 } from '../../src/domain/value-objects/commerce-values'
+import { CheckoutConflictError } from '../../src/application/ports/CommerceIntegrationPorts'
 import { DomainError } from '../../src/domain/errors/DomainError'
 import { ConfigurationError, loadConfig } from '../../src/infrastructure/config/env'
 import { createLogger } from '../../src/infrastructure/observability/logger'
@@ -90,6 +91,7 @@ describe('CreateOrder', () => {
       id: 'ord-1',
       customerId: 'acc-1',
       status: OrderStatus.Draft,
+      version: 1,
       currency: 'COP',
       total: 0,
       itemCount: 0,
@@ -174,11 +176,14 @@ describe('AddOrderLine', () => {
     const harness = buildHarness()
     const order = await harness.create.execute(createCommand)
     await harness.add.execute({ orderId: order.id, sku: 'espada-de-hierro', quantity: 1 })
-    await harness.confirm.execute(order.id)
+    const completed = (await harness.orders.findById(OrderId.create(order.id)))!
+    completed.beginCheckout()
+    completed.completeCheckout(FIXED_NOW)
+    await harness.orders.save(completed)
 
     await expect(
       harness.add.execute({ orderId: order.id, sku: 'pocion-de-vida', quantity: 1 }),
-    ).rejects.toBeInstanceOf(DomainError)
+    ).rejects.toBeInstanceOf(CheckoutConflictError)
   })
 
   it('rechaza una cantidad invalida o una referencia mal formada', async () => {
@@ -221,22 +226,20 @@ describe('RemoveOrderLine', () => {
 })
 
 describe('ConfirmOrder', () => {
-  it('confirma y persiste el pedido', async () => {
+  it('rechaza la confirmacion directa sin compra y conserva el borrador', async () => {
     const harness = buildHarness()
     const order = await harness.create.execute(createCommand)
     await harness.add.execute({ orderId: order.id, sku: 'espada-de-hierro', quantity: 2 })
 
-    const result = await harness.confirm.execute(order.id)
-
-    expect(result.status).toBe(OrderStatus.Confirmed)
-    expect((await harness.get.execute(order.id)).status).toBe(OrderStatus.Confirmed)
+    await expect(harness.confirm.execute(order.id)).rejects.toBeInstanceOf(CheckoutConflictError)
+    expect((await harness.get.execute(order.id)).status).toBe(OrderStatus.Draft)
   })
 
   it('rechaza confirmar un pedido vacio y uno inexistente', async () => {
     const harness = buildHarness()
     const order = await harness.create.execute(createCommand)
 
-    await expect(harness.confirm.execute(order.id)).rejects.toBeInstanceOf(DomainError)
+    await expect(harness.confirm.execute(order.id)).rejects.toBeInstanceOf(CheckoutConflictError)
     await expect(harness.confirm.execute('inexistente')).rejects.toBeInstanceOf(OrderNotFoundError)
   })
 })
@@ -262,7 +265,7 @@ describe('CancelOrder', () => {
       OrderNotFoundError,
     )
     await expect(harness.cancel.execute(order.id, 'Otro motivo')).rejects.toBeInstanceOf(
-      DomainError,
+      CheckoutConflictError,
     )
   })
 })
@@ -279,7 +282,8 @@ describe('GetOrder y ListCustomerOrders', () => {
 
   it('lista solo los pedidos del cliente indicado', async () => {
     const harness = buildHarness()
-    await harness.create.execute(createCommand)
+    const first = await harness.create.execute(createCommand)
+    await harness.cancel.execute(first.id, 'Crear otro pedido')
     await harness.create.execute(createCommand)
     await harness.create.execute({ customerId: 'acc-2', currency: 'COP' })
 
@@ -391,6 +395,11 @@ describe('loadConfig', () => {
     expect(
       loadConfig({
         NODE_ENV: 'production',
+        PERSISTENCE_DRIVER: 'postgres',
+        DATABASE_URL: 'postgres://usuario@localhost:5432/test',
+        INVENTORY_INTERNAL_URL: 'http://inventory:3002',
+        NOTIFICATIONS_INTERNAL_URL: 'http://notifications:3003',
+        ACCOUNT_URL: 'http://account:3000',
         AUTH_MODE: 'jwt',
         COGNITO_USER_POOL_ID: 'us-east-1_abc',
         COGNITO_CLIENT_ID: 'cliente',
@@ -451,12 +460,14 @@ describe('observabilidad, salud y utilidades', () => {
     expect(lines).toHaveLength(4)
   })
 
-  it('las sondas distinguen exito, fallo y excepcion', () => {
+  it('las sondas distinguen exito, fallo y excepcion', async () => {
     expect(buildLiveness()).toEqual({ status: 'ok', checks: {} })
-    expect(buildReadiness([{ name: 'repo', check: (): boolean => true }]).status).toBe('ok')
-    expect(buildReadiness([{ name: 'repo', check: (): boolean => false }]).status).toBe('error')
+    expect((await buildReadiness([{ name: 'repo', check: (): boolean => true }])).status).toBe('ok')
+    expect((await buildReadiness([{ name: 'repo', check: (): boolean => false }])).status).toBe(
+      'error',
+    )
     expect(
-      buildReadiness([
+      await buildReadiness([
         {
           name: 'repo',
           check: (): boolean => {

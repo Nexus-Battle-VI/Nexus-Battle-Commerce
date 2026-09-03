@@ -1,3 +1,4 @@
+import { translateIntegrationError } from './integration-errors'
 import {
   BadRequestException,
   Controller,
@@ -105,6 +106,9 @@ export class WishlistController {
   }
 
   private static translate(error: unknown): Error {
+    const integrationError = translateIntegrationError(error)
+    if (integrationError !== null) return integrationError
+
     if (error instanceof DomainError) {
       return new BadRequestException(error.message)
     }

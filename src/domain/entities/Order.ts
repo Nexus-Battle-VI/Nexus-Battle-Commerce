@@ -12,13 +12,21 @@ import type { CustomerId, OrderId, Quantity, Sku } from '../value-objects/commer
  */
 export const OrderStatus = {
   Draft: 'DRAFT',
+  Processing: 'PROCESSING',
   Confirmed: 'CONFIRMED',
   Cancelled: 'CANCELLED',
 } as const
 
 export type OrderStatus = (typeof OrderStatus)[keyof typeof OrderStatus]
 
-export interface OrderLineSnapshot {
+export interface ProductPresentation {
+  readonly productId?: string
+  readonly catalogSku?: string
+  readonly name?: string
+  readonly imageUrl?: string
+}
+
+export interface OrderLineSnapshot extends ProductPresentation {
   readonly sku: string
   readonly unitPriceAmount: number
   readonly quantity: number
@@ -26,6 +34,7 @@ export interface OrderLineSnapshot {
 }
 
 export interface OrderSnapshot {
+  readonly version?: number
   readonly id: string
   readonly customerId: string
   readonly status: OrderStatus
@@ -36,7 +45,7 @@ export interface OrderSnapshot {
   readonly lines: readonly OrderLineSnapshot[]
 }
 
-interface OrderLine {
+interface OrderLine extends ProductPresentation {
   readonly sku: Sku
   readonly unitPrice: Money
   quantity: Quantity
@@ -53,7 +62,8 @@ interface OrderLine {
 export class Order {
   readonly id: OrderId
   readonly customerId: CustomerId
-  readonly currency: string
+  private _currency: string
+  private version: number
   private status: OrderStatus
   private readonly lines: OrderLine[]
   private readonly events: DomainEvent[] = []
@@ -64,10 +74,12 @@ export class Order {
     currency: string
     status: OrderStatus
     lines: OrderLine[]
+    version?: number
   }) {
     this.id = params.id
     this.customerId = params.customerId
-    this.currency = params.currency
+    this._currency = params.currency
+    this.version = params.version ?? 0
     this.status = params.status
     this.lines = params.lines
   }
@@ -89,7 +101,8 @@ export class Order {
     customerId: CustomerId
     currency: string
     status: OrderStatus
-    lines: readonly { sku: Sku; unitPrice: Money; quantity: Quantity }[]
+    version?: number
+    lines: readonly ({ sku: Sku; unitPrice: Money; quantity: Quantity } & ProductPresentation)[]
   }): Order {
     const lines: OrderLine[] = []
 
@@ -104,7 +117,7 @@ export class Order {
         throw new DomainError(`El pedido restaurado repite la referencia "${line.sku.value}".`)
       }
 
-      lines.push({ sku: line.sku, unitPrice: line.unitPrice, quantity: line.quantity })
+      lines.push({ ...line })
     }
 
     return new Order({
@@ -112,8 +125,46 @@ export class Order {
       customerId: params.customerId,
       currency: params.currency,
       status: params.status,
+      version: params.version ?? 0,
       lines,
     })
+  }
+
+  get currency(): string {
+    return this._currency
+  }
+
+  get persistenceVersion(): number {
+    return this.version
+  }
+
+  markPersisted(): void {
+    this.version += 1
+  }
+
+  changeCurrency(currency: string): void {
+    this.assertEditable()
+    if (!this.isEmpty) throw new DomainError('Solo se puede cambiar la moneda de un carrito vacio.')
+    this._currency = Money.zero(currency).currency
+  }
+
+  beginCheckout(): void {
+    this.assertEditable()
+    if (this.isEmpty) throw new DomainError('No se puede pagar un carrito vacio.')
+    this.status = OrderStatus.Processing
+  }
+
+  resumeDraft(): void {
+    if (this.status !== OrderStatus.Processing)
+      throw new DomainError('El pedido no esta en proceso.')
+    this.status = OrderStatus.Draft
+  }
+
+  completeCheckout(occurredAt: Date): void {
+    if (this.status !== OrderStatus.Processing)
+      throw new DomainError('No existe una compra en proceso.')
+    this.status = OrderStatus.Draft
+    this.confirm(occurredAt)
   }
 
   get currentStatus(): OrderStatus {
@@ -178,7 +229,12 @@ export class Order {
    * conserva el precio de la primera vez**: el precio pactado no cambia porque
    * la persona anada una unidad mas.
    */
-  addLine(sku: Sku, unitPrice: Money, quantity: Quantity): void {
+  addLine(
+    sku: Sku,
+    unitPrice: Money,
+    quantity: Quantity,
+    presentation: ProductPresentation = {},
+  ): void {
     this.assertEditable()
 
     if (unitPrice.currency !== this.currency) {
@@ -194,7 +250,7 @@ export class Order {
     const existing = this.lines.find((line) => line.sku.equals(sku))
 
     if (existing === undefined) {
-      this.lines.push({ sku, unitPrice, quantity })
+      this.lines.push({ sku, unitPrice, quantity, ...presentation })
 
       return
     }
@@ -275,6 +331,7 @@ export class Order {
       throw new DomainError(`El pedido ${this.id.value} ya esta cancelado.`)
     }
 
+    this.assertEditable()
     this.status = OrderStatus.Cancelled
 
     this.events.push(
@@ -299,6 +356,7 @@ export class Order {
 
     return {
       id: this.id.value,
+      version: this.version,
       customerId: this.customerId.value,
       status: this.status,
       currency: this.currency,
@@ -306,6 +364,10 @@ export class Order {
       itemCount: this.itemCount,
       lines: this.lines
         .map((line) => ({
+          ...(line.productId === undefined ? {} : { productId: line.productId }),
+          ...(line.catalogSku === undefined ? {} : { catalogSku: line.catalogSku }),
+          ...(line.name === undefined ? {} : { name: line.name }),
+          ...(line.imageUrl === undefined ? {} : { imageUrl: line.imageUrl }),
           sku: line.sku.value,
           unitPriceAmount: line.unitPrice.amount,
           quantity: line.quantity.value,
@@ -320,6 +382,8 @@ export class Order {
    * aqui para que ninguna operacion de mutacion pueda saltarsela por descuido.
    */
   private assertEditable(): void {
+    if (this.status === OrderStatus.Processing)
+      throw new DomainError('La compra esta en proceso; el carrito no admite cambios.')
     if (this.status === OrderStatus.Confirmed) {
       throw new DomainError(
         `El pedido ${this.id.value} esta confirmado y no admite modificaciones.`,

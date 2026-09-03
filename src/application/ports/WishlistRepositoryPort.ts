@@ -1,5 +1,5 @@
 import type { Wishlist } from '../../domain/entities/Wishlist'
-import type { CustomerId } from '../../domain/value-objects/commerce-values'
+import type { CustomerId, Sku } from '../../domain/value-objects/commerce-values'
 
 /**
  * Puerto de persistencia del agregado Wishlist.
@@ -9,6 +9,7 @@ import type { CustomerId } from '../../domain/value-objects/commerce-values'
  * `CreateOrder`, la lista nace en el primer `add`.
  */
 export interface WishlistRepositoryPort {
+  setDesired?(customerId: CustomerId, sku: Sku, desired: boolean): Promise<void>
   save(wishlist: Wishlist): Promise<void>
   findByCustomer(customerId: CustomerId): Promise<Wishlist | null>
 }

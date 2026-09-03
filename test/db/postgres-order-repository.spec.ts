@@ -1,6 +1,6 @@
 import 'reflect-metadata'
 
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql'
+import { startTestPostgres, type TestPostgres } from './postgres-runtime'
 import type { Kysely } from 'kysely'
 
 import { describeError } from '../../src/infrastructure/observability/describe-error'
@@ -25,7 +25,7 @@ import {
  * Un doble de prueba habria pasado con un esquema equivocado.
  */
 describe('PostgresOrderRepository', () => {
-  let container: StartedPostgreSqlContainer
+  let container: TestPostgres
   let db: Kysely<Database>
   let repository: PostgresOrderRepository
 
@@ -47,7 +47,7 @@ describe('PostgresOrderRepository', () => {
   }
 
   beforeAll(async () => {
-    container = await new PostgreSqlContainer('postgres:17-alpine').start()
+    container = await startTestPostgres()
     db = createDatabase({ connectionString: container.getConnectionUri() })
 
     const { error } = await migrateToLatest(db)
@@ -62,7 +62,9 @@ describe('PostgresOrderRepository', () => {
     await container.stop()
   })
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    await db.deleteFrom('order_lines').execute()
+    await db.deleteFrom('orders').execute()
     repository = new PostgresOrderRepository(db)
   })
 
@@ -108,7 +110,11 @@ describe('PostgresOrderRepository', () => {
       .executeTakeFirstOrThrow()
 
     expect(Object.keys(columnas).sort()).toEqual([
+      'catalog_sku',
+      'image_url',
       'order_id',
+      'product_id',
+      'product_name',
       'quantity',
       'sku',
       'unit_price_amount',
@@ -204,6 +210,7 @@ describe('PostgresOrderRepository', () => {
     addLine(segundo, 'SKU-C', 3000, 2)
     const ajeno = buildOrder('sub-otro-cliente')
 
+    primero.confirm(AT)
     await repository.save(primero)
     await repository.save(segundo)
     await repository.save(ajeno)
