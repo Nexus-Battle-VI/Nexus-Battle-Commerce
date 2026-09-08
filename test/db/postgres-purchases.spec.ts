@@ -42,7 +42,7 @@ describe('Compras persistentes y concurrencia PostgreSQL', () => {
     await server.stop()
   })
   beforeEach(async () => {
-    await sql`truncate purchase_mail_outbox, purchase_attempts, order_lines, orders, saved_cart_items, wishlist_items`.execute(
+    await sql`truncate purchase_mail_outbox, purchase_premium_notices, purchase_attempts, order_lines, orders, saved_cart_items, wishlist_items`.execute(
       db,
     )
   })
@@ -120,6 +120,10 @@ describe('Compras persistentes y concurrencia PostgreSQL', () => {
     expect(await restarted.pendingMail()).toEqual([])
     expect((await restarted.findByOrder(order.id.value))?.state).toBe('COMPLETED')
     expect(await restarted.findByOrder('missing')).toBeNull()
+    const notices = await restarted.pendingPremiumNotices()
+    expect(notices).toEqual([{ id: `${attempt.id}:${productId}`, productId }])
+    await restarted.markPremiumNoticeSent(notices[0]!.id)
+    expect(await restarted.pendingPremiumNotices()).toEqual([])
   })
 
   it('un fallo al insertar outbox revierte tambien la confirmacion del pedido', async () => {
@@ -139,8 +143,10 @@ describe('Compras persistentes y concurrencia PostgreSQL', () => {
     }
     expect((await orders.findById(order.id))?.currentStatus).toBe('PROCESSING')
     expect((await store.findByOrder(order.id.value))?.state).toBe('DELIVERED')
+    expect(await store.pendingPremiumNotices()).toEqual([])
     await store.complete(attempt)
     expect(await store.pendingMail()).toHaveLength(1)
+    expect(await store.pendingPremiumNotices()).toHaveLength(1)
   })
 
   it('un rechazo seguro conserva carrito y permite un nuevo intento; no permite liberar una entrega', async () => {

@@ -12,6 +12,7 @@ import * as migration001 from '../../adapters/outbound/persistence/migrations/00
 import * as migration002 from '../../adapters/outbound/persistence/migrations/002-wishlist'
 import * as migration004 from '../../adapters/outbound/persistence/migrations/004-integrated-purchases'
 import * as migration003 from '../../adapters/outbound/persistence/migrations/003-saved-cart'
+import * as migration005 from '../../adapters/outbound/persistence/migrations/005-purchase-premium-notices'
 
 export interface DatabaseOptions {
   readonly connectionString: string
@@ -55,6 +56,7 @@ const migrations: MigrationProvider = {
       '002-wishlist': migration002,
       '003-saved-cart': migration003,
       '004-integrated-purchases': migration004,
+      '005-purchase-premium-notices': migration005,
     }),
 }
 

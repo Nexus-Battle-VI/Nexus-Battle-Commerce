@@ -1,6 +1,7 @@
 import type { Kysely } from 'kysely'
 import {
   CheckoutConflictError,
+  type PremiumPurchaseNotice,
   type PurchaseAttempt,
   type PurchaseNotification,
   type PurchaseState,
@@ -182,6 +183,19 @@ export class PostgresPurchaseStore implements PurchaseStorePort {
         })
         .onConflict((oc) => oc.column('id').doNothing())
         .execute()
+      const productIds = [...new Set(attempt.notification.items.map((item) => item.productId))]
+      if (productIds.length > 0)
+        await trx
+          .insertInto('purchase_premium_notices')
+          .values(
+            productIds.map((productId) => ({
+              id: `${attempt.id}:${productId}`,
+              product_id: productId,
+              sent_at: null,
+            })),
+          )
+          .onConflict((oc) => oc.column('id').doNothing())
+          .execute()
     })
   }
 
@@ -278,5 +292,46 @@ export class PostgresPurchaseStore implements PurchaseStorePort {
     return rows.some((row) =>
       decode(row).notification.items.some((item) => item.productId === productId),
     )
+  }
+
+  async pendingPremiumNotices(): Promise<readonly PremiumPurchaseNotice[]> {
+    const rows = await this.db
+      .selectFrom('purchase_premium_notices')
+      .select(['id', 'product_id'])
+      .where('sent_at', 'is', null)
+      .orderBy('created_at')
+      .orderBy('id')
+      .execute()
+    return rows.map((row) => ({ id: row.id, productId: row.product_id }))
+  }
+
+  async duePremiumNotices(now: Date): Promise<readonly PremiumPurchaseNotice[]> {
+    const rows = await this.db
+      .selectFrom('purchase_premium_notices')
+      .select(['id', 'product_id'])
+      .where('sent_at', 'is', null)
+      .where('next_attempt_at', '<=', now)
+      .orderBy('next_attempt_at')
+      .orderBy('id')
+      .limit(50)
+      .execute()
+    return rows.map((row) => ({ id: row.id, productId: row.product_id }))
+  }
+
+  async deferPremiumNotice(id: string, nextAttemptAt: Date): Promise<void> {
+    await this.db
+      .updateTable('purchase_premium_notices')
+      .set({ next_attempt_at: nextAttemptAt })
+      .where('id', '=', id)
+      .where('sent_at', 'is', null)
+      .execute()
+  }
+
+  async markPremiumNoticeSent(id: string): Promise<void> {
+    await this.db
+      .updateTable('purchase_premium_notices')
+      .set({ sent_at: new Date() })
+      .where('id', '=', id)
+      .execute()
   }
 }

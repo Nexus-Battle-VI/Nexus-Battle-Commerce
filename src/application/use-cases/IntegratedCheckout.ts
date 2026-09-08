@@ -14,6 +14,7 @@ import {
   IntegrationUnavailableError,
   type CatalogReservationPort,
   type InventoryGrantPort,
+  type PremiumPurchaseNoticePort,
   type PurchaseAttempt,
   type PurchaseMailPort,
   type PurchaseRecipientPort,
@@ -32,6 +33,7 @@ export interface IntegratedCheckoutDependencies {
   readonly inventory: InventoryGrantPort
   readonly recipient: PurchaseRecipientPort
   readonly mail: PurchaseMailPort
+  readonly premiumPurchases: PremiumPurchaseNoticePort
   readonly clock?: ClockPort
 }
 
@@ -224,6 +226,19 @@ export class IntegratedCheckout {
         if (!(error instanceof IntegrationUnavailableError)) errors.push(error)
         try {
           await this.deps.store.deferMail(notification.notificationId, retryAt())
+        } catch (deferError: unknown) {
+          errors.push(deferError)
+        }
+      }
+    }
+    for (const notice of await this.deps.store.duePremiumNotices(now())) {
+      try {
+        await this.deps.premiumPurchases.notify(notice.productId)
+        await this.deps.store.markPremiumNoticeSent(notice.id)
+      } catch (error: unknown) {
+        if (!(error instanceof IntegrationUnavailableError)) errors.push(error)
+        try {
+          await this.deps.store.deferPremiumNotice(notice.id, retryAt())
         } catch (deferError: unknown) {
           errors.push(deferError)
         }
