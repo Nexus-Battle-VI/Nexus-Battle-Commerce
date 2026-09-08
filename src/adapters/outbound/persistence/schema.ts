@@ -129,9 +129,25 @@ export interface PurchaseMailOutboxTable {
   readonly sent_at: Date | null
   readonly created_at: Generated<Date>
 }
+/**
+ * Aviso pendiente hacia Catalog de una compra premium en moneda real (HU-36.6).
+ *
+ * `id` es `${attemptId}:${productId}`, no un UUID propio: un pedido puede
+ * incluir varios productos premium, y esta clave compuesta es lo que hace que
+ * reintentar `complete()` inserte cada aviso una sola vez sin coordinacion
+ * adicional (mismo `onConflict...doNothing` que `purchase_mail_outbox`).
+ */
+export interface PurchasePremiumNoticesTable {
+  readonly next_attempt_at: Generated<Date>
+  readonly id: string
+  readonly product_id: string
+  readonly sent_at: Date | null
+  readonly created_at: Generated<Date>
+}
 export interface Database {
   readonly purchase_attempts: PurchaseAttemptsTable
   readonly purchase_mail_outbox: PurchaseMailOutboxTable
+  readonly purchase_premium_notices: PurchasePremiumNoticesTable
   readonly orders: OrdersTable
   readonly order_lines: OrderLinesTable
   readonly wishlist_items: WishlistItemsTable

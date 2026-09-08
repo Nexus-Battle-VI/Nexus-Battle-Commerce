@@ -78,6 +78,9 @@ const harness = async () => {
   const mail = {
     send: jest.fn<Promise<void>, [PurchaseNotification]>().mockResolvedValue(undefined),
   }
+  const premiumPurchases = {
+    notify: jest.fn<Promise<void>, [string]>().mockResolvedValue(undefined),
+  }
   const payments = new SimulatedPaymentGateway()
   const dependencies: IntegratedCheckoutDependencies = {
     orders,
@@ -88,6 +91,7 @@ const harness = async () => {
     inventory,
     recipient,
     mail,
+    premiumPurchases,
     payments,
   }
   const workflow = new IntegratedCheckout(dependencies)
@@ -101,6 +105,7 @@ const harness = async () => {
     applied,
     recipient,
     mail,
+    premiumPurchases,
     payments,
     workflow,
     command,
@@ -145,9 +150,13 @@ describe('Coordinacion recuperable de compras', () => {
     expect(serialized).not.toContain('securityCode')
     expect(serialized).not.toContain(h.command.accessToken)
     expect(h.mail.send).not.toHaveBeenCalled()
+    expect(await h.store.pendingPremiumNotices()).toEqual([expect.objectContaining({ productId })])
+    expect(h.premiumPurchases.notify).not.toHaveBeenCalled()
     await h.workflow.recover()
     expect(h.mail.send).toHaveBeenCalledTimes(1)
     expect(await h.store.pendingMail()).toEqual([])
+    expect(h.premiumPurchases.notify).toHaveBeenCalledWith(productId)
+    expect(await h.store.pendingPremiumNotices()).toEqual([])
   })
 
   it('replay completado conserva referencia y otra compra usa otra operacion', async () => {
