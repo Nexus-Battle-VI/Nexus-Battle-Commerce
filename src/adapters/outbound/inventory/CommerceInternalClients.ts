@@ -3,6 +3,7 @@ import {
   IntegrationUnavailableError,
   type CatalogReservationPort,
   type InventoryGrantPort,
+  type PremiumPurchaseNoticePort,
   type PurchaseMailPort,
   type PurchaseNotification,
   type ReservationCommand,
@@ -53,6 +54,48 @@ export class InternalJsonClient {
     } catch (error: unknown) {
       if (error instanceof IntegrationRejectedError || error instanceof IntegrationUnavailableError)
         throw error
+      throw new IntegrationUnavailableError(
+        'No se pudo confirmar el resultado del servicio; se conserva la operacion para reintentar.',
+      )
+    }
+  }
+
+  /**
+   * Variante sin cuerpo de respuesta.
+   *
+   * `post()` exige JSON en la respuesta porque cada llamada existente devuelve
+   * un estado que este cliente valida. El contrato de avisos de compra premium
+   * de Catalog responde `200` vacio a proposito (no hay nada que Commerce deba
+   * leer de vuelta), y `response.json()` fallaria sobre un cuerpo vacio.
+   */
+  async postEmpty(path: string): Promise<void> {
+    const timestamp = String(Date.now())
+    const body = {}
+    try {
+      const response = await this.request(`${this.baseUrl}${path}`, {
+        method: 'POST',
+        redirect: 'error',
+        signal: AbortSignal.timeout(this.timeoutMs),
+        headers: {
+          'content-type': 'application/json',
+          'x-internal-service': 'commerce',
+          'x-internal-timestamp': timestamp,
+          'x-internal-signature': signInternalRequest(this.secret, {
+            service: 'commerce',
+            method: 'POST',
+            path,
+            timestamp,
+            body,
+          }),
+        },
+        body: JSON.stringify(body),
+      })
+      if (!response.ok)
+        throw new IntegrationUnavailableError(
+          `La operacion requiere recuperacion (${String(response.status)}).`,
+        )
+    } catch (error: unknown) {
+      if (error instanceof IntegrationUnavailableError) throw error
       throw new IntegrationUnavailableError(
         'No se pudo confirmar el resultado del servicio; se conserva la operacion para reintentar.',
       )
@@ -120,5 +163,14 @@ export class HttpPurchaseMail implements PurchaseMailPort {
       result.status !== 'SENT'
     )
       throw new IntegrationUnavailableError('El correo sigue pendiente de confirmacion.')
+  }
+}
+
+export class HttpCatalogPremiumPurchases implements PremiumPurchaseNoticePort {
+  constructor(private readonly client: InternalJsonClient) {}
+  async notify(productId: string): Promise<void> {
+    await this.client.postEmpty(
+      `/api/internal/v1/catalog/products/${encodeURIComponent(productId)}/premium-purchases`,
+    )
   }
 }

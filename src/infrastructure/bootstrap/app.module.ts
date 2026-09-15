@@ -13,6 +13,7 @@ import {
   HttpCatalogReservations,
   HttpInventoryGrant,
   HttpPurchaseMail,
+  HttpCatalogPremiumPurchases,
 } from '../../adapters/outbound/inventory/CommerceInternalClients'
 import { PurchaseRecoveryWorker } from './PurchaseRecoveryWorker'
 const INTEGRATED_CHECKOUT = Symbol('IntegratedCheckout')
@@ -213,6 +214,7 @@ export const DATABASE_CONNECTION = Symbol('DatabaseConnection')
             config.internalTimeoutMs,
           ),
           mail: new HttpPurchaseMail(internal(config.notificationsInternalUrl)),
+          premiumPurchases: new HttpCatalogPremiumPurchases(internal(config.catalogInternalUrl)),
         })
       },
       inject: [

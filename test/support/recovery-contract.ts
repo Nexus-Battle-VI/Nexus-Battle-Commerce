@@ -71,12 +71,16 @@ const workflowFixture = (fixture: RecoveryFixture) => {
   const mail = {
     send: jest.fn<Promise<void>, [{ notificationId: string }]>().mockResolvedValue(undefined),
   }
+  const premiumPurchases = {
+    notify: jest.fn<Promise<void>, [string]>().mockResolvedValue(undefined),
+  }
   const payments = { charge: jest.fn() }
   const workflow = new IntegratedCheckout({
     ...fixture,
     reservations,
     inventory,
     mail,
+    premiumPurchases,
     payments,
     pricing: { priceOf: () => Promise.resolve(null) },
     ids: { generate: () => 'unused' },
@@ -88,6 +92,7 @@ const workflowFixture = (fixture: RecoveryFixture) => {
     reservations,
     inventory,
     mail,
+    premiumPurchases,
     payments,
     now: () => new Date(time),
     advance: () => {
