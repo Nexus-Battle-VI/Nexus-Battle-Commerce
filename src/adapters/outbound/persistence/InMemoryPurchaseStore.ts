@@ -1,5 +1,6 @@
 import {
   CheckoutConflictError,
+  type PremiumPurchaseNotice,
   type PurchaseAttempt,
   type PurchaseNotification,
   type PurchaseState,
@@ -12,8 +13,10 @@ import { OrderId } from '../../../domain/value-objects/commerce-values'
 export class InMemoryPurchaseStore implements PurchaseStorePort {
   private readonly attempts = new Map<string, PurchaseAttempt>()
   private readonly mail = new Map<string, PurchaseNotification>()
+  private readonly premiumNotices = new Map<string, PremiumPurchaseNotice>()
   private readonly attemptDueAt = new Map<string, number>()
   private readonly mailDueAt = new Map<string, number>()
+  private readonly premiumNoticeDueAt = new Map<string, number>()
   private serial: Promise<unknown> = Promise.resolve()
   constructor(private readonly orders: OrderRepositoryPort) {}
   private exclusive<T>(work: () => Promise<T>): Promise<T> {
@@ -85,6 +88,12 @@ export class InMemoryPurchaseStore implements PurchaseStorePort {
       this.attempts.set(attempt.id, { ...current, state: 'COMPLETED' })
       this.mail.set(attempt.notification.notificationId, structuredClone(attempt.notification))
       this.mailDueAt.set(attempt.notification.notificationId, Date.now())
+      const productIds = [...new Set(attempt.notification.items.map((item) => item.productId))]
+      for (const productId of productIds) {
+        const id = `${attempt.id}:${productId}`
+        this.premiumNotices.set(id, { id, productId })
+        this.premiumNoticeDueAt.set(id, Date.now())
+      }
     })
   }
   async fail(attempt: PurchaseAttempt, failure: string): Promise<void> {
@@ -123,6 +132,28 @@ export class InMemoryPurchaseStore implements PurchaseStorePort {
   markMailSent(id: string): Promise<void> {
     this.mail.delete(id)
     this.mailDueAt.delete(id)
+    return Promise.resolve()
+  }
+  pendingPremiumNotices(): Promise<readonly PremiumPurchaseNotice[]> {
+    return Promise.resolve(structuredClone([...this.premiumNotices.values()]))
+  }
+  async duePremiumNotices(now: Date): Promise<readonly PremiumPurchaseNotice[]> {
+    return (await this.pendingPremiumNotices())
+      .filter((notice) => (this.premiumNoticeDueAt.get(notice.id) ?? 0) <= now.getTime())
+      .sort(
+        (a, b) =>
+          (this.premiumNoticeDueAt.get(a.id) ?? 0) - (this.premiumNoticeDueAt.get(b.id) ?? 0) ||
+          a.id.localeCompare(b.id),
+      )
+      .slice(0, 50)
+  }
+  deferPremiumNotice(id: string, nextAttemptAt: Date): Promise<void> {
+    if (this.premiumNotices.has(id)) this.premiumNoticeDueAt.set(id, nextAttemptAt.getTime())
+    return Promise.resolve()
+  }
+  markPremiumNoticeSent(id: string): Promise<void> {
+    this.premiumNotices.delete(id)
+    this.premiumNoticeDueAt.delete(id)
     return Promise.resolve()
   }
   wasPurchased(customerId: string, productId: string): Promise<boolean> {

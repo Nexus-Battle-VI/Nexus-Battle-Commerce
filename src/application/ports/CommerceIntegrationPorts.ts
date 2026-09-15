@@ -45,6 +45,20 @@ export interface PurchaseMailPort {
   send(notification: PurchaseNotification): Promise<void>
 }
 
+export interface PremiumPurchaseNotice {
+  readonly id: string
+  readonly productId: string
+}
+
+/**
+ * Notifica a Catalog que un producto premium tuvo una compra en moneda real
+ * (HU-36.6, CA-03). Catalog usa este aviso solo para bloquear el retiro del
+ * flag premium; Commerce sigue siendo el unico dueño de la transaccion.
+ */
+export interface PremiumPurchaseNoticePort {
+  notify(productId: string): Promise<void>
+}
+
 export interface PurchaseRecipientPort {
   /** Resolves the authenticated subject through Account; never accepts a client email. */
   resolve(subject: string, accessToken: string): Promise<string>
@@ -90,6 +104,10 @@ export interface PurchaseStorePort {
   deferMail(notificationId: string, nextAttemptAt: Date): Promise<void>
   markMailSent(notificationId: string): Promise<void>
   wasPurchased(customerId: string, productId: string): Promise<boolean>
+  pendingPremiumNotices(): Promise<readonly PremiumPurchaseNotice[]>
+  duePremiumNotices(now: Date): Promise<readonly PremiumPurchaseNotice[]>
+  deferPremiumNotice(id: string, nextAttemptAt: Date): Promise<void>
+  markPremiumNoticeSent(id: string): Promise<void>
 }
 
 export const PURCHASE_STORE = Symbol('PurchaseStorePort')
