@@ -15,6 +15,9 @@ export const startTestPostgres = async (): Promise<TestPostgres> => {
   if (!['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname))
     throw new Error('POSTGRES_TEST_URL debe apuntar al motor local de pruebas.')
   const admin = new Pool({ connectionString: supplied, max: 1 })
+  // Mismo motivo que en `createDatabase`: sin oyente, que el motor corte esta
+  // conexion ociosa terminaria el proceso de Jest en lugar de fallar una prueba.
+  admin.on('error', () => undefined)
   const name = `commerce_test_${randomBytes(10).toString('hex')}`
   await admin.query(`CREATE DATABASE "${name}"`)
   url.pathname = '/' + name
