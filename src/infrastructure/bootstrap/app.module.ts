@@ -131,6 +131,7 @@ import { UuidGenerator } from '../../adapters/outbound/system/UuidGenerator'
 
 import { createDatabase } from '../persistence/database'
 import type { Database } from '../../adapters/outbound/persistence/schema'
+import { describeError } from '../observability/describe-error'
 import { createLogger, type Logger } from '../observability/logger'
 import { AuthMode, loadConfig, PersistenceDriver, type AppConfig } from '../config/env'
 
@@ -265,7 +266,12 @@ export const DATABASE_CONNECTION = Symbol('DatabaseConnection')
 
         logger.info('postgres_persistence', { detail: 'Adaptador PostgreSQL activo.' })
 
-        return createDatabase({ connectionString: config.databaseUrl })
+        return createDatabase({
+          connectionString: config.databaseUrl,
+          onIdleError: (error) => {
+            logger.warn('postgres_idle_connection_error', { detail: describeError(error) })
+          },
+        })
       },
       inject: [APP_CONFIG, LOGGER],
     },
