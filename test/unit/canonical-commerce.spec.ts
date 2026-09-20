@@ -36,6 +36,7 @@ import { SavedCart } from '../../src/domain/entities/SavedCart'
 
 const PRODUCT_ID = '72a3f0e1-78ad-4d1c-a641-e328529c4b41'
 const SECOND_ID = '72a3f0e1-78ad-4d1c-a641-e328529c4b42'
+const HERO_ID = '72a3f0e1-78ad-4d1c-a641-e328529c4b43'
 const customer = CustomerId.create('customer-a')
 const NOW = new Date('2026-09-03T12:00:00Z')
 const initial: CatalogProduct = {
@@ -69,6 +70,7 @@ const harness = () => {
         name: product.name,
         imageUrl: product.imageUrl,
         availableUnits: product.availableUnits,
+        type: product.type,
         ...product.realMoneyPrice,
       })
     },
@@ -86,6 +88,7 @@ const harness = () => {
   const deps = {
     orders,
     pricing,
+    purchases,
     ids: { generate: () => `order-${String(++sequence)}` },
     clock: { now: () => NOW },
   }
@@ -284,6 +287,43 @@ describe('Deseos y adquirido canonicos', () => {
       ProductNotPurchasableError,
     )
     expect(await h.wishlist.findByCustomer(customer)).toBeNull()
+  })
+})
+
+describe('Exclusividad de heroes ya adquiridos', () => {
+  it('no permite anadir al carrito un heroe que el cliente ya compro', async () => {
+    const h = harness()
+    h.products.set(HERO_ID, {
+      ...initial,
+      productId: HERO_ID,
+      sku: 'guerrero-tanque',
+      type: 'HEROE',
+    })
+    h.purchased.add(`${customer.value}:${HERO_ID}`)
+    const cart = await h.open.execute(customer.value, 'COP')
+    await expect(
+      h.add.execute({ orderId: cart.id, productId: HERO_ID, quantity: 1 }),
+    ).rejects.toBeInstanceOf(CheckoutConflictError)
+    expect((await h.get.execute(customer.value))!.itemCount).toBe(0)
+  })
+  it('permite anadir un heroe que el cliente todavia no posee', async () => {
+    const h = harness()
+    h.products.set(HERO_ID, {
+      ...initial,
+      productId: HERO_ID,
+      sku: 'guerrero-tanque',
+      type: 'HEROE',
+    })
+    const cart = await h.open.execute(customer.value, 'COP')
+    const added = await h.add.execute({ orderId: cart.id, productId: HERO_ID, quantity: 1 })
+    expect(added.itemCount).toBe(1)
+  })
+  it('la exclusividad es por categoria: un arma se puede volver a comprar aunque ya se posea', async () => {
+    const h = harness()
+    h.purchased.add(`${customer.value}:${PRODUCT_ID}`)
+    const cart = await h.open.execute(customer.value, 'COP')
+    const added = await h.add.execute({ orderId: cart.id, productId: PRODUCT_ID, quantity: 1 })
+    expect(added.itemCount).toBe(1)
   })
 })
 
