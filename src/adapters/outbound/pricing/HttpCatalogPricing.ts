@@ -33,6 +33,7 @@ export class HttpCatalogPricing implements ProductPricingPort {
         typeof data.name !== 'string' ||
         typeof data.imageUrl !== 'string' ||
         typeof data.premium !== 'boolean' ||
+        typeof data.type !== 'string' ||
         !['ACTIVE', 'SUSPENDED'].includes(String(data.lifecycleStatus)) ||
         (data.availableUnits !== null &&
           (!Number.isSafeInteger(data.availableUnits) || Number(data.availableUnits) < 0))
@@ -54,6 +55,7 @@ export class HttpCatalogPricing implements ProductPricingPort {
         name: data.name,
         imageUrl: data.imageUrl,
         premium: data.premium,
+        type: data.type,
         lifecycleStatus: data.lifecycleStatus as 'ACTIVE' | 'SUSPENDED',
         availableUnits: data.availableUnits as number | null,
         realMoneyPrice:
@@ -81,6 +83,7 @@ export class HttpCatalogPricing implements ProductPricingPort {
       name: product.name,
       imageUrl: product.imageUrl,
       availableUnits: product.availableUnits,
+      type: product.type,
       ...product.realMoneyPrice,
     }
   }

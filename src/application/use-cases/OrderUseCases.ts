@@ -14,15 +14,24 @@ import type { ClockPort } from '../ports/ClockPort'
 import type { IdGeneratorPort } from '../ports/IdGeneratorPort'
 import type { OrderRepositoryPort } from '../ports/OrderRepositoryPort'
 import type { ProductPrice, ProductPricingPort } from '../ports/ProductPricingPort'
-import { CheckoutConflictError } from '../ports/CommerceIntegrationPorts'
+import { CheckoutConflictError, type PurchaseStorePort } from '../ports/CommerceIntegrationPorts'
 import { DomainError } from '../../domain/errors/DomainError'
 import { OrderNotFoundError, ProductNotPurchasableError } from '../errors/ApplicationError'
 import { type OrderDto, toOrderDto } from '../dto/OrderDto'
+
+/** Categorias de producto que un mismo cliente no puede poseer por duplicado. */
+const UNIQUE_PER_CUSTOMER_TYPES: ReadonlySet<string> = new Set(['HEROE'])
 
 export interface OrderDependencies {
   readonly orders: OrderRepositoryPort
   readonly pricing: ProductPricingPort
   readonly clock: ClockPort
+  /**
+   * Opcional: solo lo conocen los adaptadores con integracion HTTP real (igual
+   * que `WishlistDependencies.purchases`). Sin el, `AddOrderLine` no impide
+   * recomprar un heroe -el catalogo local de demo no lo necesita-.
+   */
+  readonly purchases?: Pick<PurchaseStorePort, 'wasPurchased'>
   readonly ids: IdGeneratorPort
 }
 export interface CreateOrderCommand {
@@ -63,6 +72,30 @@ export const requirePrice = async (
   const price = await pricing.priceOf(reference)
   if (price === null) throw new ProductNotPurchasableError(reference)
   return price
+}
+
+/**
+ * Un heroe (u otra categoria que se declare unica por cliente) no se puede
+ * agregar al carrito si el cliente ya lo compro antes: no tiene sentido
+ * poseer el mismo heroe dos veces. El resto de categorias (armas, pociones,
+ * ...) si admiten mas de una unidad, asi que la regla es deliberadamente
+ * estrecha -por tipo, no universal-.
+ *
+ * `deps.purchases` es opcional (igual que en Wishlist): sin integracion HTTP
+ * real no hay como saber que compro el cliente, asi que la regla se omite en
+ * vez de fallar cerrado sobre un catalogo local de demo.
+ */
+const rejectIfAlreadyOwnedUnique = async (
+  deps: OrderDependencies,
+  customerId: string,
+  price: ProductPrice,
+): Promise<void> => {
+  if (deps.purchases === undefined) return
+  if (price.type === undefined || !UNIQUE_PER_CUSTOMER_TYPES.has(price.type)) return
+  const reference = price.productId ?? price.sku
+  if (await deps.purchases.wasPurchased(customerId, reference)) {
+    throw new CheckoutConflictError('Ya tienes este héroe. No puedes comprarlo de nuevo.')
+  }
 }
 /** La cantidad total se contrasta con stock; un cambio de precio exige una nueva aceptacion. */
 export const checkCartQuote = (
@@ -175,6 +208,7 @@ export class AddOrderLine {
     const reference = Sku.create(command.productId ?? command.sku ?? '').value
     const quantity = Quantity.create(command.quantity)
     const price = await requirePrice(this.deps.pricing, reference)
+    await rejectIfAlreadyOwnedUnique(this.deps, order.customerId.value, price)
     const existing = matchingLines(order, price)
     const total = quantity.value + existing.reduce((sum, line) => sum + line.quantity, 0)
     checkCartQuote(price, total, order.currency)

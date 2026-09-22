@@ -413,8 +413,16 @@ export const DATABASE_CONNECTION = Symbol('DatabaseConnection')
         pricing: ProductPricingPort,
         clock: ClockPort,
         ids: IdGeneratorPort,
-      ): OrderDependencies => ({ orders, pricing, clock, ids }),
-      inject: [ORDER_REPOSITORY, PRODUCT_PRICING, CLOCK, ID_GENERATOR],
+        purchases: PurchaseStorePort,
+        config: AppConfig,
+      ): OrderDependencies => ({
+        orders,
+        pricing,
+        clock,
+        ids,
+        ...(config.integrationMode === 'http' ? { purchases } : {}),
+      }),
+      inject: [ORDER_REPOSITORY, PRODUCT_PRICING, CLOCK, ID_GENERATOR, PURCHASE_STORE, APP_CONFIG],
     },
     {
       provide: CREATE_ORDER,

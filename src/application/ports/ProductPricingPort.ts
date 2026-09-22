@@ -14,6 +14,14 @@ export interface ProductPrice {
   readonly name?: string
   readonly imageUrl?: string
   readonly availableUnits?: number | null
+  /**
+   * Categoria del producto en Catalog (`HEROE`, `ARMA`, ...). Opcional: solo la
+   * conocen los adaptadores que consultan el producto completo (HTTP real), y
+   * hoy solo la usa `AddOrderLine` para impedir recomprar un heroe ya adquirido
+   * -una regla que no aplica a las demas categorias, que si admiten mas de una
+   * unidad-.
+   */
+  readonly type?: string
   readonly sku: string
   readonly amount: number
   readonly currency: string
@@ -34,6 +42,8 @@ export interface CatalogProduct {
   readonly lifecycleStatus: 'ACTIVE' | 'SUSPENDED'
   readonly availableUnits: number | null
   readonly realMoneyPrice: { readonly amount: number; readonly currency: string } | null
+  /** Ver `ProductPrice.type`. */
+  readonly type?: string
 }
 
 export const PRODUCT_PRICING = Symbol('ProductPricingPort')
