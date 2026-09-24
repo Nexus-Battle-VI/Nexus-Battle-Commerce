@@ -43,6 +43,14 @@ export class SimulatedPaymentGateway implements PaymentGatewayPort {
    */
   private readonly approved = new Map<string, PaymentOutcome>()
 
+  /**
+   * Solo repite el chequeo de "no vacio", deliberadamente. La FORMA del
+   * numero/vencimiento/codigo (digitos, longitud, MM/AA) ya se valida en el
+   * borde HTTP (`PaymentRequestBody`, `checkout.dto.ts`) antes de llegar
+   * aqui. Esta comprobacion es la unica red para quien invoca el caso de uso
+   * sin pasar por ese borde -recuperacion, pruebas-: no se replica el
+   * formato para no tener dos fuentes de la misma regla.
+   */
   charge(request: PaymentRequest): Promise<PaymentOutcome> {
     if (
       [
