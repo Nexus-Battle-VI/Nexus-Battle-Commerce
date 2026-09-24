@@ -39,7 +39,30 @@ export interface IntegratedCheckoutDependencies {
 
 export const RECOVERY_RETRY_DELAY_MS = 2000
 
+/** Tope de la espera creciente entre reintentos de UN mismo correo. */
+export const MAIL_RETRY_MAX_DELAY_MS = 5 * 60 * 1000
+
+/**
+ * Espera antes de reintentar un correo tras su fallo consecutivo numero
+ * `failures` (1 = el primero): 2 s, 4 s, 8 s... hasta `MAIL_RETRY_MAX_DELAY_MS`.
+ *
+ * El primer reintento sigue siendo a los 2 s, como antes: solo se espacian los
+ * que ya fallaron varias veces. Con una espera fija de 2 s, diez correos que
+ * NUNCA se entregaban (destinatarios no verificados en SES sandbox) se
+ * reintentaban ~5 veces por segundo durante dias.
+ */
+export const mailRetryDelayMs = (failures: number): number =>
+  Math.min(MAIL_RETRY_MAX_DELAY_MS, RECOVERY_RETRY_DELAY_MS * 2 ** Math.max(0, failures - 1))
+
 export class IntegratedCheckout {
+  /**
+   * Fallos consecutivos por correo, SOLO en memoria del proceso: no hay
+   * migracion ni columna nueva. Tras un reinicio el contador vuelve a cero y el
+   * correo se reintenta a los 2 s otra vez, para volver a espaciarse. Se borra
+   * en cuanto el correo se envia, asi que no crece mas alla de los pendientes.
+   */
+  private readonly mailFailures = new Map<string, number>()
+
   constructor(private readonly deps: IntegratedCheckoutDependencies) {}
 
   async execute(command: CheckoutCommand): Promise<PurchaseStatus> {
@@ -222,10 +245,16 @@ export class IntegratedCheckout {
       try {
         await this.deps.mail.send(notification)
         await this.deps.store.markMailSent(notification.notificationId)
+        this.mailFailures.delete(notification.notificationId)
       } catch (error: unknown) {
         if (!(error instanceof IntegrationUnavailableError)) errors.push(error)
+        const failures = (this.mailFailures.get(notification.notificationId) ?? 0) + 1
+        this.mailFailures.set(notification.notificationId, failures)
         try {
-          await this.deps.store.deferMail(notification.notificationId, retryAt())
+          await this.deps.store.deferMail(
+            notification.notificationId,
+            new Date(now().getTime() + mailRetryDelayMs(failures)),
+          )
         } catch (deferError: unknown) {
           errors.push(deferError)
         }
