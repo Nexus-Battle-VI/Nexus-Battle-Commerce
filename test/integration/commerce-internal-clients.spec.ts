@@ -198,15 +198,16 @@ describe('Adaptadores HTTP de checkout', () => {
       { ...product, lifecycleStatus: 'SUSPENDED' },
       { ...product, realMoneyPrice: null },
       // Elegibilidad de comercializacion premium (Infrastructure
-      // docs/contracts/ecommerce-integration-v1.md): ITEM y EPICA quedan
-      // fuera de E-commerce aunque premium=true y tengan realMoneyPrice.
+      // docs/contracts/ecommerce-integration-v1.md): ITEM, EPICA y HABILIDAD
+      // quedan fuera de E-commerce aunque premium=true y tengan realMoneyPrice.
       { ...product, type: 'ITEM' },
       { ...product, type: 'EPICA' },
+      { ...product, type: 'HABILIDAD' },
     ]) {
       response = { status: 200, body: unavailableProduct }
       expect(await pricing.priceOf(productId)).toBeNull()
     }
-    for (const eligibleType of ['HEROE', 'HABILIDAD', 'ARMA', 'ARMADURA']) {
+    for (const eligibleType of ['HEROE', 'ARMA', 'ARMADURA']) {
       response = { status: 200, body: { ...product, type: eligibleType } }
       expect(await pricing.priceOf(productId)).toEqual(
         expect.objectContaining({ productId, type: eligibleType }),
