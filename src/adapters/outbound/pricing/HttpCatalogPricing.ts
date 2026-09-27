@@ -9,6 +9,21 @@ const record = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
+/**
+ * Categorias elegibles para el flujo de compra premium (contrato Infrastructure
+ * `docs/contracts/ecommerce-integration-v1.md`, "Elegibilidad de comercializacion
+ * premium", aclaracion del PO 2026-09-24, ampliada 2026-09-27). `ITEM` y `EPICA`
+ * quedan fuera de E-commerce: siguen existiendo en Catalog/Player-Inventory/
+ * Missions, pero la epica se obtiene por Mision/Master, nunca por compra.
+ * `HABILIDAD` tambien queda fuera desde la aclaracion del 2026-09-27: una
+ * habilidad es intrinseca del heroe -viene incluida al adquirirlo, nunca se
+ * vende por separado- y no un producto independiente de la vitrina. La
+ * autoridad de esta regla vive aqui, en Commerce, no en Catalog ni en Web: no
+ * se agrega un campo derivado (`ecommerceEligible`) ni un endpoint nuevo, se
+ * reutiliza el `type` que `productOf()` ya recibe de la misma respuesta.
+ */
+const ECOMMERCE_ELIGIBLE_TYPES: ReadonlySet<string> = new Set(['HEROE', 'ARMA', 'ARMADURA'])
+
 export class HttpCatalogPricing implements ProductPricingPort {
   constructor(
     private readonly baseUrl: string,
@@ -74,7 +89,8 @@ export class HttpCatalogPricing implements ProductPricingPort {
     if (
       product?.lifecycleStatus !== 'ACTIVE' ||
       !product.premium ||
-      product.realMoneyPrice === null
+      product.realMoneyPrice === null ||
+      !ECOMMERCE_ELIGIBLE_TYPES.has(product.type ?? '')
     )
       return null
     return {

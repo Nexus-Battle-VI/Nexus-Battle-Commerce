@@ -148,17 +148,92 @@ describe('API del pago simulado', () => {
     expect((await pay(id, { ...VALID_CARD, holder: ' ' })).status).toBe(400)
   })
 
-  it('acepta los cuatro datos sin inventar validaciones bancarias', async () => {
+  /**
+   * La forma se valida (ver los tests de formato mas abajo), pero nada de
+   * Luhn, marca de tarjeta ni vigencia: un numero de 13 digitos que no
+   * corresponde a ninguna marca conocida y una fecha ya vencida se aceptan
+   * igual, porque HU-59 no establece esas reglas bancarias.
+   */
+  it('acepta datos con forma valida sin inventar Luhn, marca ni vigencia', async () => {
     const id = await orderReadyToPay()
     const result = await pay(id, {
       holder: 'A',
-      number: 'abcd',
-      expiry: 'despues',
-      securityCode: 'x',
+      number: '1234567890123',
+      expiry: '01/20',
+      securityCode: '000',
     })
     expect(result.status).toBe(200)
     expect(result.body.realMoneyMoved).toBe(false)
-    expect(result.body.maskedCard).toBe('****')
+    expect(result.body.maskedCard).toBe('0123')
+  })
+
+  /** Validacion de FORMA del numero de tarjeta: solo digitos, 13 a 19. */
+  it.each(['abcd', '411111111111', '41111111111111111111', '4111-1111-1111-1111'])(
+    'responde 400 con un numero de tarjeta con forma invalida (%s)',
+    async (number) => {
+      const id = await orderReadyToPay()
+
+      expect((await pay(id, { ...VALID_CARD, number })).status).toBe(400)
+
+      const after = await request(app.getHttpServer()).get(`/api/orders/${id}`)
+      expect(after.body.status).toBe('DRAFT')
+    },
+  )
+
+  it.each(['1234567890123', '123456789012345', '1234567890123456789'])(
+    'acepta numeros de tarjeta con longitudes distintas de 16 (%s)',
+    async (number) => {
+      const id = await orderReadyToPay()
+
+      expect((await pay(id, { ...VALID_CARD, number })).status).toBe(200)
+    },
+  )
+
+  /** Validacion de FORMA del vencimiento: MM/AA o MM/AAAA, mes 01-12. */
+  it.each(['despues', '13/30', '00/30', '1/30', '12-30', '12/3'])(
+    'responde 400 con un vencimiento con forma invalida (%s)',
+    async (expiry) => {
+      const id = await orderReadyToPay()
+
+      expect((await pay(id, { ...VALID_CARD, expiry })).status).toBe(400)
+    },
+  )
+
+  it.each(['01/30', '12/2030', '09/26'])(
+    'acepta vencimientos con forma valida MM/AA o MM/AAAA (%s)',
+    async (expiry) => {
+      const id = await orderReadyToPay()
+
+      expect((await pay(id, { ...VALID_CARD, expiry })).status).toBe(200)
+    },
+  )
+
+  /** Validacion de FORMA del codigo de seguridad: solo digitos, 3 o 4. */
+  it.each(['x', '12', '12345', 'abc'])(
+    'responde 400 con un codigo de seguridad con forma invalida (%s)',
+    async (securityCode) => {
+      const id = await orderReadyToPay()
+
+      expect((await pay(id, { ...VALID_CARD, securityCode })).status).toBe(400)
+    },
+  )
+
+  it.each(['123', '1234'])(
+    'acepta codigos de seguridad de 3 o 4 digitos (%s)',
+    async (securityCode) => {
+      const id = await orderReadyToPay()
+
+      expect((await pay(id, { ...VALID_CARD, securityCode })).status).toBe(200)
+    },
+  )
+
+  /** El sufijo de rechazo de la pasarela simulada sigue funcionando con la nueva validacion de forma. */
+  it('sigue permitiendo forzar el rechazo con el sufijo 0000 tras validar la forma', async () => {
+    const id = await orderReadyToPay()
+
+    const response = await pay(id, { ...VALID_CARD, number: '4111111111110000' })
+
+    expect(response.status).toBe(402)
   })
 
   it('rechaza campos no declarados en el contrato', async () => {

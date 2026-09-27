@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import {
   IntegratedCheckout,
+  MAIL_RETRY_MAX_DELAY_MS,
+  mailRetryDelayMs,
   RECOVERY_RETRY_DELAY_MS,
   type IntegratedCheckoutDependencies,
 } from '../../src/application/use-cases/IntegratedCheckout'
@@ -272,6 +274,45 @@ describe('Coordinacion recuperable de compras', () => {
     expect(h.inventory.grant).toHaveBeenCalledTimes(1)
     expect(h.reservations.reserve).toHaveBeenCalledTimes(1)
     expect(h.mail.send.mock.calls[0]?.[0]).toEqual(h.mail.send.mock.calls[1]?.[0])
+  })
+
+  it('la espera del correo crece 2 s, 4 s, 8 s... y se detiene en el tope', () => {
+    expect([1, 2, 3, 4].map(mailRetryDelayMs)).toEqual([2000, 4000, 8000, 16000])
+    // El primer reintento no cambia respecto a la espera fija de siempre.
+    expect(mailRetryDelayMs(1)).toBe(RECOVERY_RETRY_DELAY_MS)
+    expect(mailRetryDelayMs(8)).toBe(256000)
+    expect(mailRetryDelayMs(9)).toBe(MAIL_RETRY_MAX_DELAY_MS)
+    expect(mailRetryDelayMs(10_000)).toBe(MAIL_RETRY_MAX_DELAY_MS)
+  })
+
+  it('un correo que nunca se entrega espacia sus reintentos y no supera el tope', async () => {
+    const h = await harness()
+    await h.workflow.execute(h.command)
+    let time = Date.now() + 1000
+    const recovery = new IntegratedCheckout({
+      ...h.dependencies,
+      clock: { now: () => new Date(time) },
+    })
+    h.mail.send.mockRejectedValue(unavailable())
+
+    for (let failure = 1; failure <= 12; failure++) {
+      await recovery.recover()
+      expect(h.mail.send).toHaveBeenCalledTimes(failure)
+
+      // Un milisegundo antes de la ventana NO reintenta: con la espera fija de
+      // 2 s de antes, desde el segundo fallo esto reintentaba de todos modos.
+      const gap = mailRetryDelayMs(failure)
+      expect(gap).toBeLessThanOrEqual(MAIL_RETRY_MAX_DELAY_MS)
+      time += gap - 1
+      await recovery.recover()
+      expect(h.mail.send).toHaveBeenCalledTimes(failure)
+
+      time += 1
+    }
+
+    // Sigue pendiente, sin perderse ni marcarse como enviado.
+    expect(await h.store.pendingMail()).toHaveLength(1)
+    expect(h.inventory.grant).toHaveBeenCalledTimes(1)
   })
 
   it('solicitudes concurrentes convergen en una operacion y un correo', async () => {

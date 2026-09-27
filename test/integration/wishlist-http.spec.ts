@@ -111,9 +111,9 @@ describe('API de la lista de deseos', () => {
       .send({ sku, quantity: 1 })
     const payment = await request(app.getHttpServer()).post(`/api/orders/${orderId}/payment`).send({
       holder: 'Persona de prueba',
-      number: '1234',
-      expiry: 'prueba',
-      securityCode: 'prueba',
+      number: '4111111111111111',
+      expiry: '12/30',
+      securityCode: '123',
     })
     expect(payment.status).toBe(200)
 
