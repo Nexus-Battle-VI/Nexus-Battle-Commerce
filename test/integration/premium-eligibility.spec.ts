@@ -99,7 +99,7 @@ describe('Elegibilidad de comercializacion premium (autoridad en Commerce)', () 
     }
   }
 
-  describe.each(['ITEM', 'EPICA'])('type=%s (fuera de E-commerce)', (type) => {
+  describe.each(['ITEM', 'EPICA', 'HABILIDAD'])('type=%s (fuera de E-commerce)', (type) => {
     it('AddOrderLine rechaza el producto con ProductNotPurchasableError aunque premium=true y tenga realMoneyPrice', async () => {
       response = { status: 200, body: { ...baseProduct, type } }
       const h = harness()
@@ -115,7 +115,7 @@ describe('Elegibilidad de comercializacion premium (autoridad en Commerce)', () 
     })
   })
 
-  it.each(['HEROE', 'HABILIDAD', 'ARMA', 'ARMADURA'])(
+  it.each(['HEROE', 'ARMA', 'ARMADURA'])(
     'AddOrderLine acepta type=%s cuando cumple el resto de condiciones',
     async (type) => {
       response = { status: 200, body: { ...baseProduct, type } }
